@@ -1,0 +1,22 @@
+       05 PAY-ID            PIC X(12).
+       05 PAY-TYPE          PIC X(08).
+       05 PAY-RAIL          PIC X(08).
+       05 PAY-SRC           PIC X(12).
+       05 PAY-DST           PIC X(12).
+       05 PAY-AMOUNT        PIC S9(15)V99 COMP-3.
+       05 PAY-CURRENCY      PIC X(03).
+       05 PAY-STATUS        PIC X(02).
+       05 PAY-REF           PIC X(24).
+       05 PAY-REQUEST       PIC X(24).
+       05 PAY-CORR          PIC X(24).
+       05 PAY-OPERATOR      PIC X(12).
+       05 PAY-DESCR         PIC X(40).
+       05 PAY-TXN-ID        PIC X(24).
+       05 PAY-JRN-ID        PIC X(20).
+       05 PAY-ORIGIN        PIC X(12).
+       05 PAY-REASON        PIC X(40).
+       05 PAY-CREATED       PIC 9(08).
+       05 PAY-VALUEDATE     PIC 9(08).
+       05 PAY-SETTLED       PIC 9(08).
+       05 PAY-VERSION       PIC 9(05).
+       05 PAY-HASH          PIC X(16).

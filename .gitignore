@@ -1,0 +1,8 @@
+*.md
+build/
+var/
+*.o
+*.so
+*.cbl.lst
+*.lst
+core

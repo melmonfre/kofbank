@@ -1,0 +1,15 @@
+       05 CRO-KEY.
+          10 CRO-FAC-ID     PIC X(12).
+          10 CRO-INSTALLMENT PIC 9(04).
+       05 CRO-DUE-DATE      PIC 9(08).
+       05 CRO-PRINCIPAL     PIC S9(15)V99 COMP-3.
+       05 CRO-INTEREST      PIC S9(15)V99 COMP-3.
+       05 CRO-FEES          PIC S9(15)V99 COMP-3.
+       05 CRO-PAID-PRIN     PIC S9(15)V99 COMP-3.
+       05 CRO-PAID-INT      PIC S9(15)V99 COMP-3.
+       05 CRO-PAID-FEE      PIC S9(15)V99 COMP-3.
+       05 CRO-TOTAL-DUE     PIC S9(15)V99 COMP-3.
+       05 CRO-STATUS        PIC X(02).
+       05 CRO-EFF-DATE      PIC 9(08).
+       05 CRO-UPDATED       PIC 9(08).
+       05 CRO-VERSION       PIC 9(05).

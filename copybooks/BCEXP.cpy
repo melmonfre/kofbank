@@ -1,0 +1,15 @@
+       05 CX-FAC-ID        PIC X(12).
+       05 CX-PRODUCT       PIC X(04).
+       05 CX-CURRENCY      PIC X(03).
+       05 CX-APPROVED      PIC S9(15)V99 COMP-3.
+       05 CX-CONTRACTED    PIC S9(15)V99 COMP-3.
+       05 CX-PRINCIPAL     PIC S9(15)V99 COMP-3.
+       05 CX-PENDING       PIC S9(15)V99 COMP-3.
+       05 CX-OVERDUE       PIC S9(15)V99 COMP-3.
+       05 CX-INTEREST-ACCR PIC S9(15)V99 COMP-3.
+       05 CX-FEES-ACCR     PIC S9(15)V99 COMP-3.
+       05 CX-PAID-PRIN     PIC S9(15)V99 COMP-3.
+       05 CX-STATUS        PIC X(04).
+       05 CX-UPDATED       PIC 9(08).
+       05 CX-VERSION       PIC 9(05).
+       05 CX-HASH          PIC X(16).

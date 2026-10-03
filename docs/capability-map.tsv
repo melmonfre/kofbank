@@ -1,0 +1,58 @@
+domain	status	tests	dependencies	production_dependency
+foundation-runtime	implemented	yes	-	-
+customer	implemented	yes	-	-
+customer-relationships	missing	no	customer	-
+beneficial-owner	missing	no	customer	KYC
+account	implemented	yes	customer,ledger	-
+product-catalog	implemented	yes	foundation	-
+ledger	implemented	yes	foundation	-
+accounting-period	missing	no	ledger	-
+financial-close	missing	no	ledger,batch	-
+accruals	missing	no	ledger,interest	-
+transactions	implemented	yes	account,ledger	-
+txn-lifecycle	implemented	yes	transactions,ledger,limits,reconciliation	-
+txn-authorization	implemented	yes	transactions,limits	-
+txn-reversal	implemented	yes	transactions,ledger	-
+payments	implemented	yes	account,ledger	-
+payment-scheduling	missing	no	payments,batch	-
+payment-batches	missing	no	payments,batch	-
+payment-fees	missing	no	payments,fees	-
+pix	missing	no	payments	Pix spec
+credit	implemented	yes	customer,account,ledger,product,interest,limits,txn	-
+loans	missing	no	credit,interest,ledger	-
+collateral	missing	no	credit	-
+interest	implemented	yes	-	-
+fees	partial	yes	ledger	-
+tax	missing	no	ledger	jurisdiction
+collections	missing	no	credit,payments	-
+cards	missing	no	account,payments	card network
+merchant-acquiring	missing	no	cards,payments	card network
+treasury	missing	no	ledger,fx	-
+fx	missing	no	ledger	rate source
+international-banking	missing	no	payments,fx	SWIFT
+investments	missing	no	ledger	exchange
+trade-finance	missing	no	credit,international	-
+corporate-banking	missing	no	customer,payments	-
+limits	implemented	yes	foundation	-
+risk	missing	no	credit,ledger	-
+fraud	missing	no	limits,txn	rules only
+aml	missing	no	customer,txn	regulation
+reconciliation	implemented	yes	ledger,payments	-
+recon-ledger	implemented	yes	ledger	-
+recon-payment	implemented	yes	payments	-
+recon-external	implemented	yes	external-files	external statements
+recon-exceptions	implemented	yes	-	-
+recon-resolution	implemented	yes	ledger,txn	-
+batch-eod	implemented	yes	all	JCL/JES
+credit-eod	implemented	yes	credit,batch-eod	-
+batch-eom-eoy	missing	no	batch,accounting	-
+statements	missing	no	account,ledger	-
+reporting	partial	yes	ledger	-
+mainframe-execution	designed	no	-	z/OS,CICS,DB2,MQ
+persistence-vsam	implemented	yes	-	VSAM/IDCAMS
+persistence-db2	designed	no	-	DB2
+messaging	partial	yes	-	IBM MQ
+security-rbac	designed	no	-	RACF
+operational-controls	partial	yes	-	-
+data-integrity	partial	yes	all	-
+failure-recovery	partial	yes	all	-
