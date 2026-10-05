@@ -19,12 +19,22 @@ payment-batches	missing	no	payments,batch	-
 payment-fees	missing	no	payments,fees	-
 pix	missing	no	payments	Pix spec
 credit	implemented	yes	customer,account,ledger,product,interest,limits,txn	-
-loans	missing	no	credit,interest,ledger	-
+loans	implemented	yes	credit,interest,ledger,txn	-
+loan-agreement	implemented	yes	credit-facility,product	-
+loan-amortization	implemented	yes	loan-agreement,interest	-
+loan-disbursement	implemented	yes	loan-agreement,txn-lifecycle	-
+loan-repayment	implemented	yes	loan-amortization,txn-lifecycle	-
+loan-writeoff	implemented	yes	loan-agreement,ledger	-
+loan-lifecycle	implemented	yes	loan-agreement	-
+loan-eod	implemented	yes	loans,batch-eod	-
+recon-loan	implemented	yes	loans,ledger	-
+recon-collection	implemented	yes	collections,ledger	-
+loan-restructuring	partial	yes	loan-agreement	jurisdiction
 collateral	missing	no	credit	-
 interest	implemented	yes	-	-
 fees	partial	yes	ledger	-
 tax	missing	no	ledger	jurisdiction
-collections	missing	no	credit,payments	-
+collections	implemented	yes	loans,ledger,payments,reconciliation	-
 cards	missing	no	account,payments	card network
 merchant-acquiring	missing	no	cards,payments	card network
 treasury	missing	no	ledger,fx	-

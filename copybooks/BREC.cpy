@@ -15,6 +15,5 @@
        05 REC-ADJUSTMENTS  PIC 9(09).
        05 REC-SRC-AMT      PIC S9(15)V99 COMP-3.
        05 REC-INT-AMT      PIC S9(15)V99 COMP-3.
-       05 REC-HASH         PIC X(16).
        05 REC-RC           PIC X(02).
        05 REC-MSG          PIC X(80).

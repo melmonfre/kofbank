@@ -1,0 +1,23 @@
+       01 BK-PX-KEY-PARMS.
+          05 XK-OP             PIC X(18).
+          05 XK-ID             PIC X(12).
+          05 XK-TYPE           PIC X(10).
+          05 XK-VALUE          PIC X(60).
+          05 XK-HASH           PIC X(16).
+          05 XK-MASK           PIC X(30).
+          05 XK-CUST           PIC X(12).
+          05 XK-ACCT           PIC X(12).
+          05 XK-PART           PIC X(12).
+          05 XK-STATUS         PIC X(12).
+          05 XK-CLAIM          PIC X(12).
+          05 XK-FRAUD          PIC X(01).
+          05 XK-SELF           PIC X(01).
+          05 XK-COUNT          PIC 9(04).
+          05 XK-DATE           PIC 9(08).
+          05 XK-REASON         PIC X(40).
+          05 XK-REPLAY         PIC X(01).
+          05 XK-OPERATOR       PIC X(12).
+          05 XK-CORR           PIC X(24).
+          05 XK-REQUEST        PIC X(24).
+          05 XK-RC             PIC X(02).
+          05 XK-MSG            PIC X(80).

@@ -1,0 +1,71 @@
+IDENTIFICATION DIVISION.
+PROGRAM-ID. COLWQ.
+
+ENVIRONMENT DIVISION.
+INPUT-OUTPUT SECTION.
+FILE-CONTROL.
+    SELECT REC-FILE ASSIGN TO WS-REC-PATH
+        ORGANIZATION IS INDEXED
+        ACCESS MODE IS DYNAMIC
+        RECORD KEY IS RV-ID
+        FILE STATUS IS WS-REC-ST.
+
+DATA DIVISION.
+FILE SECTION.
+FD REC-FILE.
+01 REC-REC.
+   COPY "COLRC".
+
+WORKING-STORAGE SECTION.
+01 WS-REC-PATH PIC X(200).
+01 WS-HOME PIC X(80).
+01 WS-REC-ST PIC X(02).
+01 WS-EOF PIC X(01).
+
+LINKAGE SECTION.
+COPY "COLWQ".
+
+PROCEDURE DIVISION USING BK-COL-RECLIST.
+    MOVE "00" TO RL-RC
+    MOVE SPACES TO RL-MSG
+    MOVE 0 TO RL-COUNT
+    ACCEPT WS-HOME FROM ENVIRONMENT "BANK_HOME"
+    MOVE SPACES TO WS-REC-PATH
+    STRING FUNCTION TRIM(WS-HOME) "/var/data/colrec.idx"
+        DELIMITED SIZE INTO WS-REC-PATH
+    OPEN INPUT REC-FILE
+    IF WS-REC-ST = "35"
+        GOBACK
+    END-IF
+    IF WS-REC-ST NOT = "00"
+        MOVE "35" TO RL-RC
+        GOBACK
+    END-IF
+    MOVE "N" TO WS-EOF
+    PERFORM UNTIL WS-EOF = "Y"
+        READ REC-FILE NEXT RECORD
+            AT END MOVE "Y" TO WS-EOF
+            NOT AT END
+                IF RL-COUNT >= 100
+                    MOVE "37" TO RL-RC
+                    MOVE "RECOVERY LIST LIMIT EXCEEDED" TO RL-MSG
+                    MOVE "Y" TO WS-EOF
+                END-IF
+                IF RL-COUNT < 100
+                    IF RV-CASE-ID OF REC-REC = RL-CASE
+                        ADD 1 TO RL-COUNT
+                        MOVE RV-ID OF REC-REC TO RL-ID(RL-COUNT)
+                        MOVE RV-TXN-ID OF REC-REC
+                            TO RL-TXN(RL-COUNT)
+                        MOVE RV-STATUS OF REC-REC
+                            TO RL-STATUS(RL-COUNT)
+                        MOVE RV-AMOUNT OF REC-REC
+                            TO RL-AMOUNT(RL-COUNT)
+                        MOVE RV-DATE OF REC-REC
+                            TO RL-DATE(RL-COUNT)
+                    END-IF
+                END-IF
+        END-READ
+    END-PERFORM
+    CLOSE REC-FILE
+    GOBACK.

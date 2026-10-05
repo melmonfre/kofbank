@@ -90,7 +90,12 @@ PROCEDURE DIVISION USING BK-REC-REC.
 
 LOAD-FACILITIES.
     OPEN INPUT FAC-FILE
+    IF WS-FAC-ST = "35"
+        EXIT PARAGRAPH
+    END-IF
     IF WS-FAC-ST NOT = "00"
+        MOVE "36" TO REC-RC
+        MOVE "SOURCE FILE UNREADABLE" TO REC-MSG
         EXIT PARAGRAPH
     END-IF
     MOVE "N" TO WS-EOF
@@ -98,7 +103,10 @@ LOAD-FACILITIES.
         READ FAC-FILE NEXT RECORD
             AT END MOVE "Y" TO WS-EOF
             NOT AT END
-                IF WS-N-FAC < WS-FAC-MAX
+                IF WS-N-FAC >= WS-FAC-MAX
+                    MOVE "37" TO REC-RC
+                    MOVE "FACILITY SOURCE LIMIT EXCEEDED" TO REC-MSG
+                ELSE
                     ADD 1 TO WS-N-FAC
                     MOVE CRF-ID OF FAC-REC TO WS-F-ID(WS-N-FAC)
                     MOVE CRF-CURRENCY OF FAC-REC TO WS-F-CUR(WS-N-FAC)
@@ -109,7 +117,12 @@ LOAD-FACILITIES.
 
 LOAD-TXNS.
     OPEN INPUT TXN-FILE
+    IF WS-TXN-ST = "35"
+        EXIT PARAGRAPH
+    END-IF
     IF WS-TXN-ST NOT = "00"
+        MOVE "36" TO REC-RC
+        MOVE "SOURCE FILE UNREADABLE" TO REC-MSG
         EXIT PARAGRAPH
     END-IF
     MOVE "N" TO WS-EOF
@@ -117,7 +130,10 @@ LOAD-TXNS.
         READ TXN-FILE NEXT RECORD
             AT END MOVE "Y" TO WS-EOF
             NOT AT END
-                IF WS-N-TXN < WS-TXN-MAX
+                IF WS-N-TXN >= WS-TXN-MAX
+                    MOVE "37" TO REC-RC
+                    MOVE "TRANSACTION SOURCE LIMIT EXCEEDED" TO REC-MSG
+                ELSE
                     ADD 1 TO WS-N-TXN
                     MOVE TXN-ID OF TXN-REC TO WS-T-ID(WS-N-TXN)
                     MOVE TXN-TYPE OF TXN-REC TO WS-T-TYPE(WS-N-TXN)

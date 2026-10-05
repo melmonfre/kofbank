@@ -1,0 +1,72 @@
+IDENTIFICATION DIVISION.
+PROGRAM-ID. COLPQ.
+
+ENVIRONMENT DIVISION.
+INPUT-OUTPUT SECTION.
+FILE-CONTROL.
+    SELECT PROM-FILE ASSIGN TO WS-PROM-PATH
+        ORGANIZATION IS INDEXED
+        ACCESS MODE IS DYNAMIC
+        RECORD KEY IS PM-ID
+        FILE STATUS IS WS-PROM-ST.
+
+DATA DIVISION.
+FILE SECTION.
+FD PROM-FILE.
+01 PROM-REC.
+   COPY "COLP".
+
+WORKING-STORAGE SECTION.
+01 WS-PROM-PATH PIC X(200).
+01 WS-HOME PIC X(80).
+01 WS-PROM-ST PIC X(02).
+01 WS-EOF PIC X(01).
+
+LINKAGE SECTION.
+COPY "COLPQ".
+
+PROCEDURE DIVISION USING BK-COL-PROMLIST.
+    MOVE "00" TO PL-RC
+    MOVE SPACES TO PL-MSG
+    MOVE 0 TO PL-COUNT
+    ACCEPT WS-HOME FROM ENVIRONMENT "BANK_HOME"
+    MOVE SPACES TO WS-PROM-PATH
+    STRING FUNCTION TRIM(WS-HOME) "/var/data/colprom.idx"
+        DELIMITED SIZE INTO WS-PROM-PATH
+    OPEN INPUT PROM-FILE
+    IF WS-PROM-ST = "35"
+        GOBACK
+    END-IF
+    IF WS-PROM-ST NOT = "00"
+        MOVE "35" TO PL-RC
+        GOBACK
+    END-IF
+    MOVE "N" TO WS-EOF
+    PERFORM UNTIL WS-EOF = "Y"
+        READ PROM-FILE NEXT RECORD
+            AT END MOVE "Y" TO WS-EOF
+            NOT AT END
+                IF PL-COUNT >= 100
+                    MOVE "37" TO PL-RC
+                    MOVE "PROMISE LIST LIMIT EXCEEDED" TO PL-MSG
+                    MOVE "Y" TO WS-EOF
+                ELSE
+                    IF PM-CASE-ID OF PROM-REC = PL-CASE
+                        ADD 1 TO PL-COUNT
+                        MOVE PM-ID OF PROM-REC TO PL-ID(PL-COUNT)
+                        MOVE PM-STATUS OF PROM-REC
+                            TO PL-STATUS(PL-COUNT)
+                        MOVE PM-AMOUNT OF PROM-REC
+                            TO PL-AMOUNT(PL-COUNT)
+                        MOVE PM-PAID OF PROM-REC
+                            TO PL-PAID(PL-COUNT)
+                        MOVE PM-PROMISE-DATE OF PROM-REC
+                            TO PL-DATE(PL-COUNT)
+                        MOVE PM-TXN-REF OF PROM-REC
+                            TO PL-TXN(PL-COUNT)
+                    END-IF
+                END-IF
+        END-READ
+    END-PERFORM
+    CLOSE PROM-FILE
+    GOBACK.

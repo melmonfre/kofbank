@@ -1,0 +1,56 @@
+       01 BK-PX-PARMS.
+          05 XP-OP             PIC X(18).
+          05 XP-PIX-ID         PIC X(12).
+          05 XP-ORIG-PIX-ID    PIC X(12).
+          05 XP-DIRECTION      PIC X(08).
+          05 XP-MODALITY       PIC X(12).
+          05 XP-ENV            PIC X(08).
+          05 XP-E2E-ID         PIC X(32).
+          05 XP-EXT-REF        PIC X(32).
+          05 XP-KEY-ID         PIC X(12).
+          05 XP-KEY-TYPE       PIC X(10).
+          05 XP-KEY-VALUE      PIC X(60).
+          05 XP-KEY-MASK       PIC X(30).
+          05 XP-QR-ID          PIC X(12).
+          05 XP-MED-CASE       PIC X(12).
+          05 XP-PAYER-PART     PIC X(12).
+          05 XP-PAYEE-PART     PIC X(12).
+          05 XP-PAYER-ACCT     PIC X(12).
+          05 XP-PAYER-CUST     PIC X(12).
+          05 XP-PAYEE-ACCT     PIC X(12).
+          05 XP-PAYEE-CUST     PIC X(12).
+          05 XP-PAYEE-NAME     PIC X(60).
+          05 XP-MERCHANT-ID    PIC X(16).
+          05 XP-MERCHANT-NAME  PIC X(40).
+          05 XP-MCC            PIC X(04).
+          05 XP-AMOUNT         PIC S9(15)V99 COMP-3.
+          05 XP-CURRENCY       PIC X(03).
+          05 XP-FEE-AMT        PIC S9(15)V99 COMP-3.
+          05 XP-BLOCK-AMT      PIC S9(15)V99 COMP-3.
+          05 XP-STATUS         PIC X(12).
+          05 XP-EVENT          PIC X(16).
+          05 XP-POST-STATUS    PIC X(12).
+          05 XP-SETTLE-STATUS  PIC X(12).
+          05 XP-RECON-STATUS   PIC X(12).
+          05 XP-DEV-STATUS     PIC X(12).
+          05 XP-MED-STATUS     PIC X(12).
+          05 XP-TXN-ID         PIC X(12).
+          05 XP-JRN-ID         PIC X(20).
+          05 XP-SETTLE-BATCH   PIC X(12).
+          05 XP-CHANNEL        PIC X(08).
+          05 XP-SIM            PIC X(12).
+          05 XP-ALLOW-FREE     PIC X(01).
+          05 XP-FORCE          PIC X(01).
+          05 XP-AUTO           PIC X(01).
+          05 XP-COUNT          PIC 9(05).
+          05 XP-HASH           PIC X(16).
+          05 XP-REPLAY         PIC X(01).
+          05 XP-DEV-PIX-ID     PIC X(12).
+          05 XP-DATE           PIC 9(08).
+          05 XP-DESCR          PIC X(40).
+          05 XP-REASON         PIC X(40).
+          05 XP-OPERATOR       PIC X(12).
+          05 XP-CORR           PIC X(24).
+          05 XP-REQUEST        PIC X(24).
+          05 XP-RC             PIC X(02).
+          05 XP-MSG            PIC X(80).

@@ -1,0 +1,25 @@
+       01 BK-PX-EMV.
+          05 EM-MODE           PIC X(06).
+          05 EM-IN             PIC X(500).
+          05 EM-OUT            PIC X(500).
+          05 EM-FPI            PIC X(02).
+          05 EM-MAI            PIC X(32).
+          05 EM-GUID           PIC X(32).
+          05 EM-KEY            PIC X(60).
+          05 EM-TXID           PIC X(32).
+          05 EM-MCC            PIC X(04).
+          05 EM-CURRENCY       PIC X(03).
+          05 EM-AMOUNT         PIC X(16).
+          05 EM-COUNTRY        PIC X(02).
+          05 EM-NAME           PIC X(40).
+          05 EM-CITY           PIC X(15).
+          05 EM-LANGS          PIC X(06).
+          05 EM-ADDL-TXID      PIC X(32).
+          05 EM-TIP-PCT        PIC X(03).
+          05 EM-TIP-FIX        PIC X(16).
+          05 EM-UNPARSED       PIC X(120).
+          05 EM-CRC            PIC X(04).
+          05 EM-CRC-CALC       PIC X(04).
+          05 EM-CRC-OK         PIC X(01).
+          05 EM-RC             PIC X(02).
+          05 EM-MSG            PIC X(80).

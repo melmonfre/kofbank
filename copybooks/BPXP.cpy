@@ -1,0 +1,13 @@
+       05 PP-ID             PIC X(12).
+       05 PP-ISPB           PIC X(08).
+       05 PP-NAME           PIC X(60).
+       05 PP-TYPE           PIC X(12).
+       05 PP-ROLE           PIC X(12).
+       05 PP-SELF-FLAG      PIC X(01).
+       05 PP-SETTLE-ACCT    PIC X(12).
+       05 PP-STATUS         PIC X(12).
+       05 PP-BIZDATE        PIC 9(08).
+       05 PP-CREATED        PIC 9(14).
+       05 PP-UPDATED        PIC 9(14).
+       05 PP-VERSION        PIC 9(05).
+       05 PP-HASH           PIC X(16).

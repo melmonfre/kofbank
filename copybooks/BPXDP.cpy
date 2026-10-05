@@ -1,0 +1,26 @@
+       01 BK-PX-DICT-PARMS.
+          05 DT-OP             PIC X(16).
+          05 DT-ADAPTER        PIC X(12).
+          05 DT-KEY-TYPE       PIC X(10).
+          05 DT-KEY-VALUE      PIC X(60).
+          05 DT-KEY-HASH       PIC X(16).
+          05 DT-KEY-MASK       PIC X(30).
+          05 DT-KEY-ID         PIC X(12).
+          05 DT-PART           PIC X(12).
+          05 DT-ACCT           PIC X(12).
+          05 DT-CUST           PIC X(12).
+          05 DT-NAME           PIC X(60).
+          05 DT-KEY-STATUS     PIC X(12).
+          05 DT-CLAIM-STATUS   PIC X(12).
+          05 DT-CLAIM-ID       PIC X(24).
+          05 DT-FRAUD-FLAG     PIC X(01).
+          05 DT-SELF-FLAG      PIC X(01).
+          05 DT-SIM            PIC X(12).
+          05 DT-COUNT          PIC 9(04).
+          05 DT-DATE           PIC 9(08).
+          05 DT-REASON         PIC X(40).
+          05 DT-OPERATOR       PIC X(12).
+          05 DT-CORR           PIC X(24).
+          05 DT-REQUEST        PIC X(24).
+          05 DT-RC             PIC X(02).
+          05 DT-MSG            PIC X(80).

@@ -1,0 +1,14 @@
+       05 DT-ID             PIC X(12).
+       05 DT-COLL-ID        PIC X(12).
+       05 DT-DOC-TYPE       PIC X(20).
+       05 DT-STATUS         PIC X(12).
+       05 DT-ISSUE-DATE     PIC 9(08).
+       05 DT-EXP-DATE       PIC 9(08).
+       05 DT-EXTERNAL-REF   PIC X(24).
+       05 DT-VERIFIED       PIC X(12).
+       05 DT-DESCRIPTION    PIC X(80).
+       05 DT-OPERATOR       PIC X(12).
+       05 DT-CREATED        PIC 9(08).
+       05 DT-UPDATED        PIC 9(08).
+       05 DT-VERSION        PIC 9(05).
+       05 DT-HASH           PIC X(16).

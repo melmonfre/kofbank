@@ -1,0 +1,67 @@
+IDENTIFICATION DIVISION.
+PROGRAM-ID. COLAQ.
+
+ENVIRONMENT DIVISION.
+INPUT-OUTPUT SECTION.
+FILE-CONTROL.
+    SELECT ACT-FILE ASSIGN TO WS-ACT-PATH
+        ORGANIZATION IS INDEXED
+        ACCESS MODE IS DYNAMIC
+        RECORD KEY IS XA-ID
+        FILE STATUS IS WS-ACT-ST.
+
+DATA DIVISION.
+FILE SECTION.
+FD ACT-FILE.
+01 ACT-REC.
+   COPY "COLA".
+
+WORKING-STORAGE SECTION.
+01 WS-ACT-PATH PIC X(200).
+01 WS-HOME PIC X(80).
+01 WS-ACT-ST PIC X(02).
+01 WS-EOF PIC X(01).
+
+LINKAGE SECTION.
+COPY "COLAQ".
+
+PROCEDURE DIVISION USING BK-COL-ACTLIST.
+    MOVE "00" TO AL-RC
+    MOVE SPACES TO AL-MSG
+    MOVE 0 TO AL-COUNT
+    ACCEPT WS-HOME FROM ENVIRONMENT "BANK_HOME"
+    MOVE SPACES TO WS-ACT-PATH
+    STRING FUNCTION TRIM(WS-HOME) "/var/data/colact.idx"
+        DELIMITED SIZE INTO WS-ACT-PATH
+    OPEN INPUT ACT-FILE
+    IF WS-ACT-ST = "35"
+        GOBACK
+    END-IF
+    IF WS-ACT-ST NOT = "00"
+        MOVE "35" TO AL-RC
+        GOBACK
+    END-IF
+    MOVE "N" TO WS-EOF
+    PERFORM UNTIL WS-EOF = "Y"
+        READ ACT-FILE NEXT RECORD
+            AT END MOVE "Y" TO WS-EOF
+            NOT AT END
+                IF AL-COUNT >= 300
+                    MOVE "37" TO AL-RC
+                    MOVE "ACTION LIST LIMIT EXCEEDED" TO AL-MSG
+                    MOVE "Y" TO WS-EOF
+                ELSE
+                    IF XA-CASE-ID OF ACT-REC = AL-CASE
+                        ADD 1 TO AL-COUNT
+                        MOVE XA-ID OF ACT-REC
+                            TO AL-ID(AL-COUNT)
+                        MOVE XA-TYPE OF ACT-REC
+                            TO AL-TYPE(AL-COUNT)
+                        MOVE XA-STATUS OF ACT-REC
+                            TO AL-STAT(AL-COUNT)
+                    END-IF
+                END-IF
+        END-READ
+    END-PERFORM
+    CLOSE ACT-FILE
+    GOBACK.

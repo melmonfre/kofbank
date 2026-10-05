@@ -1,0 +1,14 @@
+       05 XA-ID             PIC X(12).
+       05 XA-CASE-ID        PIC X(12).
+       05 XA-TYPE           PIC X(16).
+       05 XA-STATUS         PIC X(12).
+       05 XA-CHANNEL        PIC X(12).
+       05 XA-PLANNED        PIC 9(08).
+       05 XA-EXECUTED       PIC 9(08).
+       05 XA-RESULT         PIC X(80).
+       05 XA-NEXT-DATE      PIC 9(08).
+       05 XA-REASON         PIC X(80).
+       05 XA-OPERATOR       PIC X(12).
+       05 XA-CREATED        PIC 9(08).
+       05 XA-UPDATED        PIC 9(08).
+       05 XA-VERSION        PIC 9(05).

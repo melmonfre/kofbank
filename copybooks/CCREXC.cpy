@@ -1,0 +1,12 @@
+       05 EX-ID             PIC X(12).
+       05 EX-TYPE           PIC X(16).
+       05 EX-CLR-ID         PIC X(12).
+       05 EX-AUTH-ID        PIC X(12).
+       05 EX-SOURCE         PIC X(08).
+       05 EX-STATUS         PIC X(12).
+       05 EX-REASON         PIC X(80).
+       05 EX-RESOLUTION     PIC X(80).
+       05 EX-OPERATOR       PIC X(12).
+       05 EX-BIZDATE        PIC 9(08).
+       05 EX-CREATED        PIC 9(14).
+       05 EX-RESOLVED       PIC 9(14).

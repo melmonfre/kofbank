@@ -1,0 +1,9 @@
+       05 CM-ID             PIC X(12).
+       05 CM-CLR-ID         PIC X(12).
+       05 CM-AUTH-ID        PIC X(12).
+       05 CM-METHOD         PIC X(16).
+       05 CM-RESULT         PIC X(12).
+       05 CM-BIZDATE        PIC 9(08).
+       05 CM-OPERATOR       PIC X(12).
+       05 CM-REASON         PIC X(40).
+       05 CM-TIMESTAMP      PIC 9(14).

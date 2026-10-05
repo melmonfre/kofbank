@@ -1,0 +1,112 @@
+IDENTIFICATION DIVISION.
+PROGRAM-ID. CCREXCSTO.
+
+ENVIRONMENT DIVISION.
+INPUT-OUTPUT SECTION.
+FILE-CONTROL.
+    SELECT EXC-FILE ASSIGN TO WS-X-PATH
+        ORGANIZATION IS INDEXED
+        ACCESS MODE IS DYNAMIC
+        RECORD KEY IS EX-ID OF EXC-REC
+        FILE STATUS IS WS-X-ST.
+
+DATA DIVISION.
+FILE SECTION.
+FD EXC-FILE.
+01 EXC-REC.
+   COPY "CCREXC".
+
+WORKING-STORAGE SECTION.
+01 WS-X-PATH PIC X(200).
+01 WS-HOME PIC X(80).
+01 WS-X-ST PIC X(02).
+01 WS-EOF PIC X(01).
+
+LINKAGE SECTION.
+COPY "CCREXCSTO".
+01 BK-CCRD-EXC-REC.
+   COPY "CCREXC".
+
+PROCEDURE DIVISION USING BK-CCRD-STO-EXC BK-CCRD-EXC-REC.
+    MOVE "00" TO SX-RC
+    ACCEPT WS-HOME FROM ENVIRONMENT "BANK_HOME"
+    MOVE SPACES TO WS-X-PATH
+    STRING FUNCTION TRIM(WS-HOME) "/var/data/crdcexc.idx"
+        DELIMITED SIZE INTO WS-X-PATH
+    OPEN I-O EXC-FILE
+    IF WS-X-ST = "35"
+        OPEN OUTPUT EXC-FILE
+        CLOSE EXC-FILE
+        OPEN I-O EXC-FILE
+    END-IF
+    IF WS-X-ST NOT = "00"
+        MOVE WS-X-ST TO SX-RC
+        GOBACK
+    END-IF
+    EVALUATE SX-OP
+        WHEN "WRITE"
+            MOVE BK-CCRD-EXC-REC TO EXC-REC
+            WRITE EXC-REC
+                INVALID KEY MOVE "22" TO SX-RC
+            END-WRITE
+        WHEN "REWRITE"
+            MOVE EX-ID OF BK-CCRD-EXC-REC TO EX-ID OF EXC-REC
+            READ EXC-FILE
+            IF WS-X-ST = "00"
+                MOVE BK-CCRD-EXC-REC TO EXC-REC
+                REWRITE EXC-REC
+            ELSE
+                MOVE "23" TO SX-RC
+            END-IF
+        WHEN "FIND-OPEN" PERFORM DO-FIND-OPEN
+        WHEN "COUNT-STATUS" PERFORM DO-COUNT
+        WHEN "GET"
+            MOVE EX-ID OF BK-CCRD-EXC-REC TO EX-ID OF EXC-REC
+            READ EXC-FILE
+            IF WS-X-ST = "00"
+                MOVE EXC-REC TO BK-CCRD-EXC-REC
+            ELSE
+                MOVE "23" TO SX-RC
+            END-IF
+        WHEN OTHER
+            MOVE "99" TO SX-RC
+    END-EVALUATE
+    CLOSE EXC-FILE
+    GOBACK.
+
+DO-FIND-OPEN.
+    MOVE 0 TO SX-COUNT
+    MOVE "N" TO WS-EOF
+    PERFORM UNTIL WS-EOF = "Y"
+        READ EXC-FILE NEXT RECORD
+            AT END MOVE "Y" TO WS-EOF
+            NOT AT END
+                IF EX-CLR-ID OF EXC-REC =
+                    EX-CLR-ID OF BK-CCRD-EXC-REC AND
+                   EX-TYPE OF EXC-REC =
+                    EX-TYPE OF BK-CCRD-EXC-REC AND
+                   EX-STATUS OF EXC-REC NOT = "RESOLVED" AND
+                   EX-STATUS OF EXC-REC NOT = "CANCELLED"
+                    MOVE EXC-REC TO BK-CCRD-EXC-REC
+                    MOVE 1 TO SX-COUNT
+                    MOVE "Y" TO WS-EOF
+                END-IF
+        END-READ
+    END-PERFORM
+    IF SX-COUNT = 0
+        MOVE "23" TO SX-RC
+    END-IF.
+
+DO-COUNT.
+    MOVE 0 TO SX-COUNT
+    MOVE "N" TO WS-EOF
+    PERFORM UNTIL WS-EOF = "Y"
+        READ EXC-FILE NEXT RECORD
+            AT END MOVE "Y" TO WS-EOF
+            NOT AT END
+                IF EX-STATUS OF EXC-REC =
+                    EX-STATUS OF BK-CCRD-EXC-REC
+                    ADD 1 TO SX-COUNT
+                END-IF
+        END-READ
+    END-PERFORM.

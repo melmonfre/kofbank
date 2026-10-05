@@ -1,0 +1,72 @@
+IDENTIFICATION DIVISION.
+PROGRAM-ID. COLGQ.
+
+ENVIRONMENT DIVISION.
+INPUT-OUTPUT SECTION.
+FILE-CONTROL.
+    SELECT ARR-FILE ASSIGN TO WS-ARR-PATH
+        ORGANIZATION IS INDEXED
+        ACCESS MODE IS DYNAMIC
+        RECORD KEY IS AG-ID
+        FILE STATUS IS WS-ARR-ST.
+
+DATA DIVISION.
+FILE SECTION.
+FD ARR-FILE.
+01 ARR-REC.
+   COPY "COLAG".
+
+WORKING-STORAGE SECTION.
+01 WS-ARR-PATH PIC X(200).
+01 WS-HOME PIC X(80).
+01 WS-ARR-ST PIC X(02).
+01 WS-EOF PIC X(01).
+
+LINKAGE SECTION.
+COPY "COLGQ".
+
+PROCEDURE DIVISION USING BK-COL-ARRLIST.
+    MOVE "00" TO GL-RC
+    MOVE SPACES TO GL-MSG
+    MOVE 0 TO GL-COUNT
+    ACCEPT WS-HOME FROM ENVIRONMENT "BANK_HOME"
+    MOVE SPACES TO WS-ARR-PATH
+    STRING FUNCTION TRIM(WS-HOME) "/var/data/colarr.idx"
+        DELIMITED SIZE INTO WS-ARR-PATH
+    OPEN INPUT ARR-FILE
+    IF WS-ARR-ST = "35"
+        GOBACK
+    END-IF
+    IF WS-ARR-ST NOT = "00"
+        MOVE "35" TO GL-RC
+        GOBACK
+    END-IF
+    MOVE "N" TO WS-EOF
+    PERFORM UNTIL WS-EOF = "Y"
+        READ ARR-FILE NEXT RECORD
+            AT END MOVE "Y" TO WS-EOF
+            NOT AT END
+                IF GL-COUNT >= 100
+                    MOVE "37" TO GL-RC
+                    MOVE "ARRANGEMENT LIST LIMIT EXCEEDED" TO GL-MSG
+                    MOVE "Y" TO WS-EOF
+                ELSE
+                    IF AG-CASE-ID OF ARR-REC = GL-CASE
+                        ADD 1 TO GL-COUNT
+                        MOVE AG-ID OF ARR-REC TO GL-ID(GL-COUNT)
+                        MOVE AG-STATUS OF ARR-REC
+                            TO GL-STATUS(GL-COUNT)
+                        MOVE AG-TOTAL OF ARR-REC
+                            TO GL-TOTAL(GL-COUNT)
+                        MOVE AG-PAID OF ARR-REC
+                            TO GL-PAID(GL-COUNT)
+                        MOVE AG-INSTALLMENTS OF ARR-REC
+                            TO GL-INSTS(GL-COUNT)
+                        MOVE AG-INST-PAID OF ARR-REC
+                            TO GL-INPAID(GL-COUNT)
+                    END-IF
+                END-IF
+        END-READ
+    END-PERFORM
+    CLOSE ARR-FILE
+    GOBACK.
