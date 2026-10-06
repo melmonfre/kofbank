@@ -1,0 +1,113 @@
+IDENTIFICATION DIVISION.
+PROGRAM-ID. BPXMEM.
+
+*> MED (Mecanismo Especial de Devolucao) case state machine.
+*> Pure transition table: current state + event -> next state.
+*> The case is an operational/regulatory workflow.  It NEVER moves money
+*> by itself; only a DEVOLVED/PART-DEVOLV transition implies a financial
+*> devolution that some other program already executed.  Terminal states
+*> (DEVOLVED, PART-DEVOLV, INELIGIBLE, REJECTED, EXPIRED, CLOSED) admit no
+*> further transition.
+
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+01 WS-TERMINAL PIC X(01).
+
+LINKAGE SECTION.
+01 LS-CUR PIC X(12).
+01 LS-EVT PIC X(16).
+01 LS-NXT PIC X(12).
+01 LS-RC PIC X(02).
+01 LS-MSG PIC X(80).
+
+PROCEDURE DIVISION USING LS-CUR LS-EVT LS-NXT LS-RC LS-MSG.
+    MOVE "00" TO LS-RC
+    MOVE SPACES TO LS-MSG
+    MOVE SPACES TO LS-NXT
+    EVALUATE TRUE
+        WHEN LS-EVT = "ANALYZE"
+            IF LS-CUR = "OPEN" MOVE "IN-ANALYSIS" TO LS-NXT
+            ELSE PERFORM SET-INVALID
+        WHEN LS-EVT = "BLOCK"
+            IF LS-CUR = "IN-ANALYSIS" OR LS-CUR = "OPEN"
+                MOVE "BLOCK-PEND" TO LS-NXT
+            ELSE PERFORM SET-INVALID
+        WHEN LS-EVT = "BLOCKED"
+            IF LS-CUR = "BLOCK-PEND" MOVE "BLOCKED" TO LS-NXT
+            ELSE PERFORM SET-INVALID
+        WHEN LS-EVT = "ELIGIBLE"
+            IF LS-CUR = "IN-ANALYSIS" MOVE "BLOCK-PEND" TO LS-NXT
+            ELSE PERFORM SET-INVALID
+        WHEN LS-EVT = "INELIGIBLE"
+            IF LS-CUR = "OPEN" OR LS-CUR = "IN-ANALYSIS"
+                MOVE "INELIGIBLE" TO LS-NXT
+            ELSE PERFORM SET-INVALID
+        WHEN LS-EVT = "DECIDE"
+            IF LS-CUR = "BLOCKED" OR LS-CUR = "BLOCK-PEND"
+                MOVE "DECIDE-PEND" TO LS-NXT
+            ELSE PERFORM SET-INVALID
+        WHEN LS-EVT = "APPROVE"
+            IF LS-CUR = "DECIDE-PEND" OR LS-CUR = "BLOCKED"
+                MOVE "APPROVED" TO LS-NXT
+            ELSE PERFORM SET-INVALID
+        WHEN LS-EVT = "PARTIAL"
+            IF LS-CUR = "DECIDE-PEND" OR LS-CUR = "BLOCKED"
+                MOVE "PART-APPROV" TO LS-NXT
+            ELSE PERFORM SET-INVALID
+        WHEN LS-EVT = "REJECT"
+            IF LS-CUR = "DECIDE-PEND" OR LS-CUR = "BLOCKED" OR
+               LS-CUR = "OPEN" OR LS-CUR = "IN-ANALYSIS"
+                MOVE "REJECTED" TO LS-NXT
+            ELSE PERFORM SET-INVALID
+        WHEN LS-EVT = "DEVOLVE"
+            IF LS-CUR = "APPROVED" OR LS-CUR = "PART-APPROV"
+                MOVE "DEVOL-PEND" TO LS-NXT
+            ELSE PERFORM SET-INVALID
+        WHEN LS-EVT = "SUCCEED"
+            IF LS-CUR = "DEVOL-PEND" MOVE "DEVOLVED" TO LS-NXT
+            ELSE PERFORM SET-INVALID
+        WHEN LS-EVT = "PARTDEVOL"
+            IF LS-CUR = "DEVOL-PEND" MOVE "PART-DEVOLV" TO LS-NXT
+            ELSE PERFORM SET-INVALID
+        WHEN LS-EVT = "UNK"
+            IF LS-CUR = "DEVOL-PEND" MOVE "DEVOLV-UNK" TO LS-NXT
+            ELSE PERFORM SET-INVALID
+        WHEN LS-EVT = "RESOLVE-DEV"
+            IF LS-CUR = "DEVOLV-UNK" MOVE "DEVOLVED" TO LS-NXT
+            ELSE PERFORM SET-INVALID
+        WHEN LS-EVT = "RESOLVE-PART"
+            IF LS-CUR = "DEVOLV-UNK" MOVE "PART-DEVOLV" TO LS-NXT
+            ELSE PERFORM SET-INVALID
+        WHEN LS-EVT = "RESOLVE-FAIL"
+            IF LS-CUR = "DEVOLV-UNK" MOVE "DECIDE-PEND" TO LS-NXT
+            ELSE PERFORM SET-INVALID
+        WHEN LS-EVT = "EXPIRE"
+            IF LS-CUR = "OPEN" OR LS-CUR = "IN-ANALYSIS" OR
+               LS-CUR = "BLOCK-PEND" OR LS-CUR = "BLOCKED" OR
+               LS-CUR = "DECIDE-PEND"
+                MOVE "EXPIRED" TO LS-NXT
+            ELSE PERFORM SET-INVALID
+        WHEN LS-EVT = "CLOSE"
+            EVALUATE LS-CUR
+                WHEN "DEVOLVED" MOVE "CLOSED" TO LS-NXT
+                WHEN "PART-DEVOLV" MOVE "CLOSED" TO LS-NXT
+                WHEN "INELIGIBLE" MOVE "CLOSED" TO LS-NXT
+                WHEN "REJECTED" MOVE "CLOSED" TO LS-NXT
+                WHEN "EXPIRED" MOVE "CLOSED" TO LS-NXT
+                WHEN OTHER PERFORM SET-INVALID
+            END-EVALUATE
+        WHEN OTHER
+            PERFORM SET-INVALID
+    END-EVALUATE.
+    IF LS-RC = "00" AND LS-NXT = SPACES
+        PERFORM SET-INVALID
+    END-IF
+    GOBACK.
+
+SET-INVALID.
+    MOVE "20" TO LS-RC
+    STRING "INVALID MED TRANSITION " DELIMITED SIZE
+        FUNCTION TRIM(LS-CUR) DELIMITED SIZE " + " DELIMITED SIZE
+        FUNCTION TRIM(LS-EVT) DELIMITED SIZE
+        INTO LS-MSG
+    END-STRING.

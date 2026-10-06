@@ -28,5 +28,6 @@
           05 ER-CRC-EOD     PIC X(80).
           05 ER-REC-PIX-ID  PIC X(20).
           05 ER-PX-EOD      PIC X(80).
+          05 ER-MED-BATCH   PIC X(80).
           05 ER-TB-MSG      PIC X(80).
           05 ER-RC          PIC X(02).

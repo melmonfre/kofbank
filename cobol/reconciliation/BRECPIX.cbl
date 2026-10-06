@@ -242,10 +242,10 @@ MATCH-ONE-OBLIGATION.
         IF WS-FOUND = "Y"
             MOVE "Y" TO WS-E-MATCH(WS-JI)
         END-IF
-        IF WS-O-RECON(WS-I) = "PENDING"
+        ADD 1 TO REC-UNMATCHED-I
+        IF WS-O-RECON(WS-I) NOT = "EXCEPTION"
             MOVE "EXCEPTION" TO WS-O-RECON(WS-I)
             MOVE "Y" TO WS-O-CHANGE(WS-I)
-            ADD 1 TO REC-UNMATCHED-I
             PERFORM RAISE-STALE
         END-IF
         EXIT PARAGRAPH
@@ -256,9 +256,9 @@ MATCH-ONE-OBLIGATION.
             MOVE "Y" TO WS-E-MATCH(WS-JI)
         END-IF
         IF WS-O-RECON(WS-I) NOT = "EXCEPTION"
+            ADD 1 TO REC-UNMATCHED-I
             MOVE "EXCEPTION" TO WS-O-RECON(WS-I)
             MOVE "Y" TO WS-O-CHANGE(WS-I)
-            ADD 1 TO REC-UNMATCHED-I
             PERFORM RAISE-UNKNOWN
         END-IF
         EXIT PARAGRAPH
@@ -267,16 +267,16 @@ MATCH-ONE-OBLIGATION.
     IF WS-FOUND = "N"
         IF WS-O-EXT(WS-I) = SPACES
             IF WS-O-RECON(WS-I) NOT = "EXCEPTION"
+                ADD 1 TO REC-UNMATCHED-I
                 MOVE "EXCEPTION" TO WS-O-RECON(WS-I)
                 MOVE "Y" TO WS-O-CHANGE(WS-I)
-                ADD 1 TO REC-UNMATCHED-I
                 PERFORM RAISE-NO-REFERENCE
             END-IF
         ELSE
             IF WS-O-RECON(WS-I) NOT = "EXCEPTION"
+                ADD 1 TO REC-UNMATCHED-I
                 MOVE "EXCEPTION" TO WS-O-RECON(WS-I)
                 MOVE "Y" TO WS-O-CHANGE(WS-I)
-                ADD 1 TO REC-UNMATCHED-I
                 PERFORM RAISE-MISSING-EXTERNAL
             END-IF
         END-IF
@@ -317,30 +317,38 @@ FIND-BY-EXT.
 
 COMPARE-EXTERNAL.
     IF WS-E-EXT(WS-JI) NOT = WS-O-EXT(WS-I)
+        ADD 1 TO REC-UNMATCHED-I
         IF WS-O-RECON(WS-I) NOT = "EXCEPTION"
-            ADD 1 TO REC-UNMATCHED-I
+            MOVE "EXCEPTION" TO WS-O-RECON(WS-I)
+            MOVE "Y" TO WS-O-CHANGE(WS-I)
             PERFORM RAISE-REFERENCE-MISMATCH
         END-IF
         EXIT PARAGRAPH
     END-IF
     IF WS-E-AMT(WS-JI) NOT = WS-O-AMT(WS-I)
+        ADD 1 TO REC-UNMATCHED-I
         IF WS-O-RECON(WS-I) NOT = "EXCEPTION"
-            ADD 1 TO REC-UNMATCHED-I
+            MOVE "EXCEPTION" TO WS-O-RECON(WS-I)
+            MOVE "Y" TO WS-O-CHANGE(WS-I)
             PERFORM RAISE-AMOUNT-MISMATCH
         END-IF
         EXIT PARAGRAPH
     END-IF
     IF WS-E-STATUS(WS-JI) NOT = "SETTLED" AND
        WS-E-STATUS(WS-JI) NOT = "RECONCILED"
+        ADD 1 TO REC-UNMATCHED-I
         IF WS-O-RECON(WS-I) NOT = "EXCEPTION"
-            ADD 1 TO REC-UNMATCHED-I
+            MOVE "EXCEPTION" TO WS-O-RECON(WS-I)
+            MOVE "Y" TO WS-O-CHANGE(WS-I)
             PERFORM RAISE-STATUS-MISMATCH
         END-IF
         EXIT PARAGRAPH
     END-IF
     IF WS-O-DUP(WS-I) = "Y"
+        ADD 1 TO REC-UNMATCHED-I
         IF WS-O-RECON(WS-I) NOT = "EXCEPTION"
-            ADD 1 TO REC-UNMATCHED-I
+            MOVE "EXCEPTION" TO WS-O-RECON(WS-I)
+            MOVE "Y" TO WS-O-CHANGE(WS-I)
             PERFORM RAISE-DUPLICATE-EXTERNAL
         END-IF
         EXIT PARAGRAPH

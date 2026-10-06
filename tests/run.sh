@@ -354,246 +354,6 @@ sed -i 's/business-date=.*/business-date=2026-10-03/' etc/bank.cfg
 out=$(bank "batch.eod|OP01|R99|EOD9")
 check "recon.eod.fails.open" "20" "$(value "$out" rc=)"
 
-sed -i 's/business-date=.*/business-date=2026-10-02/' etc/bank.cfg
-reset
-bank "ledger.init" >/dev/null
-out=$(bank "pix.rt.create|12345678|KOF SELF|DEBITS|DPI|Y||OP01|COR|SRT1")
-check "pix.stl.self.rt" "00" "$(value "$out" rc=)"
-out=$(bank "pix.rt.create|87654321|BANCO OUTRO|DEBITS|DPI|N||OP01|COR|SRT2")
-stlrt=$(value "$out" id=)
-out=$(bank "customer.create|P|STL PAGADOR|CPF|123.456.789-09|19900101|OP01|SC1")
-stlc1=$(value "$out" id=)
-out=$(bank "account.open|$stlc1|DMND|BRL|500000|OP01|SC2|O1")
-stlpayer=$(value "$out" id=)
-out=$(bank "customer.create|P|STL RECEBEDOR|CPF|234.567.890-92|19900101|OP01|SC3")
-stlc2=$(value "$out" id=)
-out=$(bank "account.open|$stlc2|DMND|BRL|500000|OP01|SC4|O2")
-stlpayee=$(value "$out" id=)
-out=$(bank "pix.key.register|CPF|234.567.890-92|$stlpayee|$stlc2|OP01|COR|SK1")
-stlkey=$(value "$out" id=)
-out=$(bank "pix.key.seed|CPF|13579111140|$stlrt|FX000000001|FXC0000001|OUT CLIENTE|OP01|COR|SK2")
-check "pix.stl.key.seeded" "00" "$(value "$out" rc=)"
-stlforeign=$(value "$out" keyid=)
-out=$(bank "pix.out.key|$stlkey|100.00|$stlpayer|||pix local|OP01|COR|SK3||Y")
-check "pix.stl.local.posted" "POSTED" "$(value "$out" status=)"
-check "pix.stl.local.not.settleable" "PENDING" "$(value "$out" settle=)"
-out=$(bank "pix.out.key|$stlforeign|150.00|$stlpayer|||pix externo|OP01|COR|SK4||Y")
-check "pix.stl.out.posted" "POSTED" "$(value "$out" status=)"
-check "pix.stl.out.pending" "PENDING" "$(value "$out" settle=)"
-check "pix.stl.out.payeepart" "$stlrt" "$(value "$out" payeepart=)"
-out=$(bank "pix.in|50.00|$stlpayee|$stlrt|E2ESETL0000000000000000001|EXT-STL-1|PAGADOR EXTERNO|OP01|COR|SK5")
-check "pix.stl.in.posted" "POSTED" "$(value "$out" status=)"
-stlin=$(value "$out" id=)
-out=$(bank "pix.out.key|$stlforeign|70.00|$stlpayer|||a devolver|OP01|COR|SK6||Y")
-stldvl=$(value "$out" id=)
-out=$(bank "pix.devol|$stldvl|70.00|estorno integral|OP01|COR|SK7")
-check "pix.stl.devol.rc" "00" "$(value "$out" rc=)"
-out=$(bank "pix.get|$stlin")
-check "pix.stl.in.self.settle" "PENDING" "$(value "$out" settle=)"
-
-out=$(bank "pix.cycle.open|20261002|BRL|||||OP01|COR|SO1")
-check "pix.stl.cycle.open.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.cycle.open.status" "OPEN" "$(value "$out" status=)"
-cyc=$(value "$out" cycle=)
-check "pix.stl.cycle.id" "CYC20261002BRL123456" "$cyc"
-out=$(bank "pix.cycle.open|20261002|BRL|||||OP01|COR|SO2")
-check "pix.stl.cycle.replay" "Y" "$(value "$out" replay=)"
-out=$(bank "pix.cycle.accrue|20261002|BRL|||||OP01|COR|SA1")
-check "pix.stl.accrue.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.accrue.cycle" "$cyc" "$(value "$out" cycle=)"
-check "pix.stl.accrue.status" "ACCUMULATING" "$(value "$out" status=)"
-check "pix.stl.accrue.grosspay" "150.00" "$(value "$out" grosspay=)"
-check "pix.stl.accrue.grossrcv" "120.00" "$(value "$out" grossrcv=)"
-out=$(bank "pix.get|$stlin")
-check "pix.stl.in.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.cycle.accrue|20261002|BRL|||||OP01|COR|SA1")
-check "pix.stl.accrue.idempotent" "22" "$(value "$out" rc=)"
-out=$(bank "pix.cycle.close|$cyc|||||OP01|COR|SC1")
-check "pix.stl.close" "CLOSED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.calc|$cyc|||||OP01|COR|SC2")
-check "pix.stl.calc.status" "CALCULATED" "$(value "$out" status=)"
-check "pix.stl.calc.txns" "0000003" "$(value "$out" txns=)"
-check "pix.stl.calc.obligations" "0000002" "$(value "$out" obligations=)"
-check "pix.stl.calc.parties" "0000001" "$(value "$out" parties=)"
-check "pix.stl.calc.grosspay" "150.00" "$(value "$out" grosspay=)"
-check "pix.stl.calc.grossrcv" "120.00" "$(value "$out" grossrcv=)"
-check "pix.stl.calc.net" "30.00" "$(value "$out" net=)"
-check "pix.stl.calc.side" "PAYABLE" "$(value "$out" side=)"
-out=$(bank "pix.cycle.submit|$cyc||||||OP01|COR|SS1")
-check "pix.stl.submit.status" "SUBMITTED" "$(value "$out" status=)"
-out=$(bank "pix.stl.list|$cyc")
-check "pix.stl.list.count" "0000002" "$(value "$out" settlements=)"
-check "pix.stl.list.submitted" "2" "$(grep -c "status=SUBMITTED" <<<"$out")"
-check "pix.stl.list.extref" "2" "$(grep -c "extref=SPIS-" <<<"$out")"
-out=$(bank "pix.stl.get|S00000000001")
-check "pix.stl.payable.side" "PAYABLE" "$(value "$out" side=)"
-check "pix.stl.payable.gross" "150.00" "$(value "$out" gross=)"
-check "pix.stl.payable.part" "$stlrt" "$(value "$out" participant=)"
-out=$(bank "pix.stl.get|S00000000002")
-check "pix.stl.receivable.side" "RECEIVABLE" "$(value "$out" side=)"
-check "pix.stl.receivable.net" "120.00" "$(value "$out" net=)"
-out=$(bank "pix.cycle.submit|$cyc||||||OP01|COR|SS1")
-check "pix.stl.submit.idempotent" "22" "$(value "$out" rc=)"
-out=$(bank "pix.stl.get|S00000000001")
-check "pix.stl.attempts.once" "0001" "$(value "$out" attempts=)"
-out=$(bank "ledger.balance|$stlpayer")
-stlpaybal0=$(value "$out" available=)
-out=$(bank "ledger.balance|$stlpayee")
-stlrecvbal0=$(value "$out" available=)
-out=$(bank "pix.stl.result|S00000000001||SETTLED|SPIRES-1|liquidado||OP01|COR|SR1")
-check "pix.stl.result.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.result.status" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.result.amount" "150.00" "$(value "$out" settledamt=)"
-check "pix.stl.result.ref" "SPIRES-1" "$(value "$out" resultref=)"
-out=$(bank "pix.cycle.finalize|$cyc|||||OP01|COR|SF1")
-check "pix.stl.finalize.incomplete" "21" "$(value "$out" rc=)"
-check "pix.stl.finalize.incomplete.msg" "CYCLE NOT READY" "$(value "$out" msg=)"
-out=$(bank "pix.stl.result|S00000000002||SETTLED|SPIRES-2|liquidado||OP01|COR|SR2")
-check "pix.stl.result.in" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.result.in.amount" "120.00" "$(value "$out" settledamt=)"
-out=$(bank "pix.cycle.finalize|$cyc|||||OP01|COR|SF1")
-check "pix.stl.finalize.status" "SETTLED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.finalize|$cyc|||||OP01|COR|SF1")
-check "pix.stl.finalize.idempotent" "22" "$(value "$out" rc=)"
-out=$(bank "pix.stl.post|S00000000001||||OP01|COR|SP1")
-check "pix.stl.post.pay.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.post.pay.status" "POSTED" "$(value "$out" post=)"
-stl1jrnl=$(value "$out" journal=)
-case "$stl1jrnl" in
-    STL*) check "pix.stl.post.journal" "Y" "Y" ;;
-    *) check "pix.stl.post.journal" "Y" "N" ;;
-esac
-out=$(bank "pix.stl.post|S00000000002||||OP01|COR|SP2")
-check "pix.stl.post.rcv" "POSTED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|S00000000001||||OP01|COR|SP1")
-check "pix.stl.post.replay" "Y" "$(value "$out" replay=)"
-check "pix.stl.post.replay.journal" "$stl1jrnl" "$(value "$out" journal=)"
-out=$(bank "ledger.balance|$stlpayer")
-check "pix.stl.customer.untouched.payer" "$stlpaybal0" "$(value "$out" available=)"
-out=$(bank "ledger.balance|$stlpayee")
-check "pix.stl.customer.untouched.payee" "$stlrecvbal0" "$(value "$out" available=)"
-glstl=$(grep -c "|STLS" var/journal/postings.log)
-check "pix.stl.gl.lines" "4" "$glstl"
-out=$(bank "pix.pos.rebuild|P00000000002|BRL|||||OP01|COR|SPR1")
-check "pix.stl.pos.rebuild.rc" "00" "$(value "$out" rc=)"
-out=$(bank "pix.pos.list")
-check "pix.stl.pos.count" "0000001" "$(value "$out" positions=)"
-check "pix.stl.pos.part" "$stlrt" "$(value "$out" participant=)"
-check "pix.stl.pos.settledpay" "150.00" "$(value "$out" settledpay=)"
-check "pix.stl.pos.settledrcv" "120.00" "$(value "$out" settledrcv=)"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-1||OP01|COR")
-check "pix.stl.recon.balanced" "BALANCED" "$(value "$out" msg=)"
-check "pix.stl.recon.matched" "000000002" "$(value "$out" matched=)"
-check "pix.stl.recon.unmatched" "000000000" "$(value "$out" unmatched=)"
-check "pix.stl.recon.openexc" "000000000" "$(value "$out" openexc=)"
-out=$(bank "pix.cycle.get|$cyc|||||OP01|COR|SG1")
-check "pix.stl.cycle.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.cycle.recon" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.stl.get|S00000000001")
-check "pix.stl.obligation.recon" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.obligation.match" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "reconciliation.exceptions|REC-STL-1")
-check "pix.stl.recon.no.exc" "000000000" "$(value "$out" exceptions=)"
-out=$(bank "ledger.trial")
-check "pix.stl.trial.balanced" "BALANCED" "$(value "$out" msg=)"
-
-sed -i 's/business-date=.*/business-date=2026-10-03/' etc/bank.cfg
-out=$(bank "pix.out.key|$stlforeign|200.00|$stlpayer|||pix ciclo b|OP01|COR|SK8||Y")
-stlbout=$(value "$out" id=)
-out=$(bank "pix.in|60.00|$stlpayee|$stlrt|E2ESETL0000000000000000002|EXT-STL-2|PAGADOR B|OP01|COR|SK9")
-check "pix.stl.b.in.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.accrue|20261003|BRL|||||OP01|COR|SA2")
-check "pix.stl.b.accrue.rc" "00" "$(value "$out" rc=)"
-cycb=$(value "$out" cycle=)
-check "pix.stl.b.cycle" "CYC20261003BRL123456" "$cycb"
-check "pix.stl.b.grosspay" "200.00" "$(value "$out" grosspay=)"
-check "pix.stl.b.grossrcv" "60.00" "$(value "$out" grossrcv=)"
-out=$(bank "pix.get|$stlbout")
-check "pix.stl.b.out.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.stl.adjust|S00000000003|10.00|tarifa de liquidez|OP01|COR|SAJ1")
-check "pix.stl.adjust.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.adjust.amount" "10.00" "$(value "$out" adjust=)"
-check "pix.stl.adjust.net" "190.00" "$(value "$out" net=)"
-out=$(bank "pix.stl.adjust|S00000000003|10.00|duplicado|OP01|COR|SAJ1")
-check "pix.stl.adjust.idempotent" "22" "$(value "$out" rc=)"
-out=$(bank "pix.cycle.close|$cycb|||||OP01|COR|SC3")
-check "pix.stl.b.close" "CLOSED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.calc|$cycb|||||OP01|COR|SC4")
-check "pix.stl.b.calc.net" "130.00" "$(value "$out" net=)"
-check "pix.stl.b.calc.grosspay" "190.00" "$(value "$out" grosspay=)"
-out=$(bank "pix.cycle.submit|$cycb||||||OP01|COR|SS2")
-check "pix.stl.b.submit" "SUBMITTED" "$(value "$out" status=)"
-out=$(bank "pix.stl.result|S00000000003||SETTLED|SPIRES-3|valor menor|180.00|OP01|COR|SR3")
-check "pix.stl.b.result.amount" "180.00" "$(value "$out" settledamt=)"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-2||OP01|COR")
-check "pix.stl.b.recon.exc" "EXCEPTIONS" "$(value "$out" msg=)"
-check "pix.stl.b.recon.open" "000000002" "$(value "$out" openexc=)"
-out=$(bank "reconciliation.exceptions|REC-STL-2")
-check "pix.stl.b.exc.count" "000000002" "$(value "$out" exceptions=)"
-case "$out" in
-    *AMT_MISMATCH*) stlamt=yes ;;
-    *) stlamt=no ;;
-esac
-check "pix.stl.b.exc.amount.code" "yes" "$stlamt"
-case "$out" in
-    *STALE_SETTLE*) stlstale=yes ;;
-    *) stlstale=no ;;
-esac
-check "pix.stl.b.exc.stale.code" "yes" "$stlstale"
-out=$(bank "pix.cycle.get|$cycb|||||OP01|COR|SG2")
-check "pix.stl.b.cycle.exc" "RECON-EXCEPTION" "$(value "$out" status=)"
-check "pix.stl.b.cycle.recon" "EXCEPTION" "$(value "$out" recon=)"
-out=$(bank "pix.stl.get|S00000000003")
-check "pix.stl.b.obligation.recon" "EXCEPTION" "$(value "$out" recon=)"
-out=$(bank "pix.cycle.finalize|$cycb|||||OP01|COR|SF2")
-check "pix.stl.b.finalize.blocked" "20" "$(value "$out" rc=)"
-out=$(bank "pix.stl.get|S00000000004")
-check "pix.stl.b.stale.status" "SUBMITTED" "$(value "$out" status=)"
-out=$(bank "ledger.balance|$stlpayer")
-check "pix.stl.b.balance.unchanged" "$stlpaybal0" "$(value "$out" available=)"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-3||OP01|COR")
-check "pix.stl.b.recon.repeat" "EXCEPTIONS" "$(value "$out" msg=)"
-
-sed -i 's/business-date=.*/business-date=2026-10-04/' etc/bank.cfg
-out=$(bank "pix.cycle.open|20261004|BRL|||||OP01|COR|SO3")
-check "pix.stl.eod.cycle" "CYC20261004BRL123456" "$(value "$out" cycle=)"
-cycd=$(value "$out" cycle=)
-out=$(bank "pix.cycle.accrue|20261004|BRL|||||OP01|COR|SA3")
-check "pix.stl.eod.empty" "00" "$(value "$out" rc=)"
-out=$(bank "pix.cycle.get|$cycd|||||OP01|COR|SG3")
-check "pix.stl.eod.empty.status" "OPEN" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|90.00|$stlpayer|||pix eod|OP01|COR|SEA||Y")
-check "pix.stl.eod.out.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.in|30.00|$stlpayee|$stlrt|E2ESETL0000000000000000003|EXT-STL-3|PAGADOR C|OP01|COR|SEB")
-check "pix.stl.eod.in.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "ledger.balance|$stlpayer")
-eodpay0=$(value "$out" available=)
-out=$(bank "batch.eod")
-check "pix.stl.eod.batch.rc" "00" "$(value "$out" rc=)"
-out=$(bank "pix.cycle.get|$cycd|||||OP01|COR|SG4")
-check "pix.stl.eod.finalized" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.eod.recon" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.stl.list|$cycd")
-check "pix.stl.eod.obligations" "0000002" "$(value "$out" settlements=)"
-check "pix.stl.eod.reconciled" "2" "$(grep -c "status=RECONCILED" <<<"$out")"
-check "pix.stl.eod.posted" "2" "$(grep -c "post=POSTED" <<<"$out")"
-out=$(bank "pix.stl.get|S00000000005")
-check "pix.stl.eod.journal" "Y" "$(test -n "$(value "$out" journal=)" && echo Y || echo N)"
-out=$(bank "ledger.balance|$stlpayer")
-check "pix.stl.eod.customer.untouched" "$eodpay0" "$(value "$out" available=)"
-out=$(bank "ledger.trial")
-check "pix.stl.eod.trial" "BALANCED" "$(value "$out" msg=)"
-out=$(bank "batch.eod")
-check "pix.stl.eod.rerun.rc" "00" "$(value "$out" rc=)"
-glstl2=$(grep -c "|STLS" var/journal/postings.log)
-check "pix.stl.eod.rerun.no.double" "12" "$glstl2"
-out=$(bank "ledger.trial")
-check "pix.stl.eod.rerun.trial" "BALANCED" "$(value "$out" msg=)"
-out=$(bank "pix.pos.list")
-check "pix.stl.pos.settledpay.total" "420.00" "$(value "$out" settledpay=)"
-check "pix.stl.pos.settledrcv.total" "270.00" "$(value "$out" settledrcv=)"
-check "pix.stl.pos.pending" "0000001" "$(value "$out" pending=)"
-
 cp "$CFG_BAK" etc/bank.cfg
 
 reset
@@ -703,146 +463,6 @@ out=$(bank "credit.facility.exposure|F00000000001")
 check "credit.eod.overdue.amount" "30622.20" "$(value "$out" overdue=)"
 out=$(bank "reconciliation.run|CREDIT|REC-CRD2")
 check "credit.recon.after.eod" "BALANCED" "$(value "$out" msg=)"
-
-sed -i 's/business-date=.*/business-date=2026-10-02/' etc/bank.cfg
-reset
-bank "ledger.init" >/dev/null
-out=$(bank "pix.rt.create|12345678|KOF SELF|DEBITS|DPI|Y||OP01|COR|SRT1")
-check "pix.stl.rt.self" "ACTIVE" "$(value "$out" status=)"
-out=$(bank "pix.rt.create|87654321|BANCO OUTRO|DEBITS|DPI|N||OP01|COR|SRT2")
-stlrt=$(value "$out" id=)
-out=$(bank "customer.create|P|STL PAGADOR|CPF|123.456.789-09|19900101|OP01|SC1")
-out=$(bank "account.open|$(value "$out" id=)|DMND|BRL|500000|OP01|SC2|O1")
-stlpayer=$(value "$out" id=)
-out=$(bank "customer.create|P|STL RECEBEDOR|CPF|234.567.890-92|19900101|OP01|SC3")
-stlrecvc=$(value "$out" id=)
-out=$(bank "account.open|$stlrecvc|DMND|BRL|500000|OP01|SC4|O2")
-stlpayee=$(value "$out" id=)
-out=$(bank "pix.key.register|CPF|234.567.890-92|$stlpayee|$stlrecvc|OP01|COR|SK1")
-stlkey=$(value "$out" id=)
-out=$(bank "pix.key.seed|CPF|13579111140|$stlrt|FX000000001|FXC0000001|OUT CLIENTE|OP01|COR|SK2")
-check "pix.stl.seed" "00" "$(value "$out" rc=)"
-stlforeign=$(value "$out" keyid=)
-
-out=$(bank "pix.out.key|$stlkey|100.00|$stlpayer|||pix local|OP01|COR|SK3||Y")
-check "pix.stl.local.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|150.00|$stlpayer|||pix externo|OP01|COR|SK4||Y")
-stlout=$(value "$out" id=)
-check "pix.stl.out.posted" "POSTED" "$(value "$out" status=)"
-check "pix.stl.out.settle.pending" "PENDING" "$(value "$out" settle=)"
-out=$(bank "pix.in|50.00|$stlpayee|$stlrt|E2ESTL000000000000000000001|EXT-STL-1|PAGADOR EXTERNO|OP01|COR|SK5")
-stlin=$(value "$out" id=)
-check "pix.stl.in.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|70.00|$stlpayer|||a devolver|OP01|COR|SK6||Y")
-stldvl=$(value "$out" id=)
-out=$(bank "pix.devol|$stldvl|70.00|estorno integral|OP01|COR|SK7")
-check "pix.stl.devol.rc" "00" "$(value "$out" rc=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.status" "DEVOLVED" "$(value "$out" status=)"
-
-out=$(bank "pix.cycle.open|20261002|BRL|OP01|COR|SK8")
-check "pix.stl.cycle.open" "00" "$(value "$out" rc=)"
-check "pix.stl.cycle.status" "OPEN" "$(value "$out" status=)"
-cyc=$(value "$out" cycle=)
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.accrue.cycle" "$cyc" "$(value "$out" cycle=)"
-out=$(bank "pix.get|$stlout")
-check "pix.stl.out.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stlin")
-check "pix.stl.in.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.excluded" "NOT-APPLICABLE" "$(value "$out" settle=)"
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.replay" "00" "$(value "$out" rc=)"
-
-out=$(bank "pix.cycle.close|$cyc|OP01|COR|SKA")
-check "pix.stl.close" "CLOSED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.calc|$cyc|OP01|COR|SKB")
-check "pix.stl.calc" "CALCULATED" "$(value "$out" status=)"
-check "pix.stl.calc.txns" "0000003" "$(value "$out" txns=)"
-check "pix.stl.calc.grosspay" "150.00" "$(value "$out" grosspay=)"
-check "pix.stl.calc.grossrcv" "120.00" "$(value "$out" grossrcv=)"
-check "pix.stl.calc.net" "30.00" "$(value "$out" net=)"
-check "pix.stl.calc.side" "PAYABLE" "$(value "$out" side=)"
-check "pix.stl.calc.parties" "0000001" "$(value "$out" parties=)"
-
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.cycle.submit" "SUBMITTED" "$(value "$out" status=)"
-out=$(bank "pix.stl.list|$cyc")
-check "pix.stl.submit.count" "0000002" "$(value "$out" settlements=)"
-check "pix.stl.submit.status" "SUBMITTED" "$(grep -c 'status=SUBMITTED' <<<"$out" | tr -d ' ')"
-stl1=$(grep -F "side=PAYABLE" -B2 <<<"$out" | grep -F "settlement=" | head -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-stl2=$(bank "pix.stl.list|$cyc" | grep -F "settlement=" | tail -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.get.participant" "$stlrt" "$(value "$out" participant=)"
-check "pix.stl.get.extref" "SPIS-00000000001" "$(value "$out" extref=)"
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.submit.replay.attempts" "0001" "$(bank "pix.stl.get|$stl1" | grep -F "attempts=" | sed 's/^attempts=//;s/[[:space:]]*$//')"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1|valor divergente|140.00|OP01|COR|SKD")
-check "pix.stl.result.mismatch.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.result.mismatch.settled" "140.00" "$(value "$out" settledamt=)"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-BAD||OP01|COR|SKE")
-check "pix.stl.recon.bad.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.recon.bad.status" "EXCEPTIONS" "$(value "$out" msg=)"
-check "pix.stl.recon.bad.open" "000000002" "$(value "$out" openexc=)"
-out=$(bank "reconciliation.exceptions|REC-STL-BAD")
-case "$out" in
-    *AMT_MISMATCH*) stm=yes ;;
-    *) stm=no ;;
-esac
-check "pix.stl.recon.amount.mismatch.code" "yes" "$stm"
-case "$out" in
-    *STALE_SETTLE*) sts=yes ;;
-    *) sts=no ;;
-esac
-check "pix.stl.recon.stale.code" "yes" "$sts"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKF")
-check "pix.stl.recon.cycle.exc" "RECON-EXCEPTION" "$(value "$out" status=)"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1B|valor correto|150.00|OP01|COR|SKG")
-check "pix.stl.result.fixed" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.result.fixed.amount" "150.00" "$(value "$out" settledamt=)"
-out=$(bank "pix.stl.result|$stl2||SETTLED|SPIRES-2|ok|50.00|OP01|COR|SKH")
-check "pix.stl.result.in" "SETTLED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKI")
-check "pix.stl.finalize" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.finalize.post" "BALANCED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
-check "pix.stl.post.pay.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.post.pay.status" "POSTED" "$(value "$out" post=)"
-stl1jrnl=$(value "$out" journal=)
-case "$stl1jrnl" in
-    STL*) jok=yes ;;
-    *) jok=no ;;
-esac
-check "pix.stl.post.journal" "yes" "$jok"
-out=$(bank "pix.stl.post|$stl2|OP01|COR|SKK")
-check "pix.stl.post.rcv" "POSTED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
-check "pix.stl.post.replay" "Y" "$(value "$out" replay=)"
-out=$(bank "ledger.balance|$stlpayer")
-check "pix.stl.customer.untouched.payer" "489950.00" "$(value "$out" available=)"
-out=$(bank "ledger.balance|$stlpayee")
-check "pix.stl.customer.untouched.payee" "500230.00" "$(value "$out" available=)"
-grep -aq "|D|             150.00|${stlrt}|BRL|STL" var/journal/postings.log && paygl=yes || paygl=no
-check "pix.stl.gl.payable.debit" "yes" "$paygl"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-OK||OP01|COR|SKL")
-check "pix.stl.recon.ok" "BALANCED" "$(value "$out" msg=)"
-check "pix.stl.recon.ok.matched" "000000002" "$(value "$out" matched=)"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKM")
-check "pix.stl.cycle.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.cycle.recon" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.obligation.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.obligation.matched" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.pos.list")
-check "pix.stl.position.count" "0000001" "$(value "$out" positions=)"
-check "pix.stl.position.settledpay" "150.00" "$(value "$out" settledpay=)"
-check "pix.stl.position.settledrcv" "50.00" "$(value "$out" settledrcv=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKN")
-check "pix.stl.finalize.replay" "Y" "$(value "$out" replay=)"
 
 cp "$CFG_BAK" etc/bank.cfg
 
@@ -954,146 +574,6 @@ out=$(bank "loan.exposure|N00000000001")
 check "loan.eod.exposure.overdue" "30622.20" "$(value "$out" overdue=)"
 out=$(bank "reconciliation.run|LOAN|REC-LN-C2")
 check "loan.recon.after.eod" "BALANCED" "$(value "$out" msg=)"
-
-sed -i 's/business-date=.*/business-date=2026-10-02/' etc/bank.cfg
-reset
-bank "ledger.init" >/dev/null
-out=$(bank "pix.rt.create|12345678|KOF SELF|DEBITS|DPI|Y||OP01|COR|SRT1")
-check "pix.stl.rt.self" "ACTIVE" "$(value "$out" status=)"
-out=$(bank "pix.rt.create|87654321|BANCO OUTRO|DEBITS|DPI|N||OP01|COR|SRT2")
-stlrt=$(value "$out" id=)
-out=$(bank "customer.create|P|STL PAGADOR|CPF|123.456.789-09|19900101|OP01|SC1")
-out=$(bank "account.open|$(value "$out" id=)|DMND|BRL|500000|OP01|SC2|O1")
-stlpayer=$(value "$out" id=)
-out=$(bank "customer.create|P|STL RECEBEDOR|CPF|234.567.890-92|19900101|OP01|SC3")
-stlrecvc=$(value "$out" id=)
-out=$(bank "account.open|$stlrecvc|DMND|BRL|500000|OP01|SC4|O2")
-stlpayee=$(value "$out" id=)
-out=$(bank "pix.key.register|CPF|234.567.890-92|$stlpayee|$stlrecvc|OP01|COR|SK1")
-stlkey=$(value "$out" id=)
-out=$(bank "pix.key.seed|CPF|13579111140|$stlrt|FX000000001|FXC0000001|OUT CLIENTE|OP01|COR|SK2")
-check "pix.stl.seed" "00" "$(value "$out" rc=)"
-stlforeign=$(value "$out" keyid=)
-
-out=$(bank "pix.out.key|$stlkey|100.00|$stlpayer|||pix local|OP01|COR|SK3||Y")
-check "pix.stl.local.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|150.00|$stlpayer|||pix externo|OP01|COR|SK4||Y")
-stlout=$(value "$out" id=)
-check "pix.stl.out.posted" "POSTED" "$(value "$out" status=)"
-check "pix.stl.out.settle.pending" "PENDING" "$(value "$out" settle=)"
-out=$(bank "pix.in|50.00|$stlpayee|$stlrt|E2ESTL000000000000000000001|EXT-STL-1|PAGADOR EXTERNO|OP01|COR|SK5")
-stlin=$(value "$out" id=)
-check "pix.stl.in.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|70.00|$stlpayer|||a devolver|OP01|COR|SK6||Y")
-stldvl=$(value "$out" id=)
-out=$(bank "pix.devol|$stldvl|70.00|estorno integral|OP01|COR|SK7")
-check "pix.stl.devol.rc" "00" "$(value "$out" rc=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.status" "DEVOLVED" "$(value "$out" status=)"
-
-out=$(bank "pix.cycle.open|20261002|BRL|OP01|COR|SK8")
-check "pix.stl.cycle.open" "00" "$(value "$out" rc=)"
-check "pix.stl.cycle.status" "OPEN" "$(value "$out" status=)"
-cyc=$(value "$out" cycle=)
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.accrue.cycle" "$cyc" "$(value "$out" cycle=)"
-out=$(bank "pix.get|$stlout")
-check "pix.stl.out.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stlin")
-check "pix.stl.in.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.excluded" "NOT-APPLICABLE" "$(value "$out" settle=)"
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.replay" "00" "$(value "$out" rc=)"
-
-out=$(bank "pix.cycle.close|$cyc|OP01|COR|SKA")
-check "pix.stl.close" "CLOSED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.calc|$cyc|OP01|COR|SKB")
-check "pix.stl.calc" "CALCULATED" "$(value "$out" status=)"
-check "pix.stl.calc.txns" "0000003" "$(value "$out" txns=)"
-check "pix.stl.calc.grosspay" "150.00" "$(value "$out" grosspay=)"
-check "pix.stl.calc.grossrcv" "120.00" "$(value "$out" grossrcv=)"
-check "pix.stl.calc.net" "30.00" "$(value "$out" net=)"
-check "pix.stl.calc.side" "PAYABLE" "$(value "$out" side=)"
-check "pix.stl.calc.parties" "0000001" "$(value "$out" parties=)"
-
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.cycle.submit" "SUBMITTED" "$(value "$out" status=)"
-out=$(bank "pix.stl.list|$cyc")
-check "pix.stl.submit.count" "0000002" "$(value "$out" settlements=)"
-check "pix.stl.submit.status" "SUBMITTED" "$(grep -c 'status=SUBMITTED' <<<"$out" | tr -d ' ')"
-stl1=$(grep -F "side=PAYABLE" -B2 <<<"$out" | grep -F "settlement=" | head -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-stl2=$(bank "pix.stl.list|$cyc" | grep -F "settlement=" | tail -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.get.participant" "$stlrt" "$(value "$out" participant=)"
-check "pix.stl.get.extref" "SPIS-00000000001" "$(value "$out" extref=)"
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.submit.replay.attempts" "0001" "$(bank "pix.stl.get|$stl1" | grep -F "attempts=" | sed 's/^attempts=//;s/[[:space:]]*$//')"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1|valor divergente|140.00|OP01|COR|SKD")
-check "pix.stl.result.mismatch.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.result.mismatch.settled" "140.00" "$(value "$out" settledamt=)"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-BAD||OP01|COR|SKE")
-check "pix.stl.recon.bad.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.recon.bad.status" "EXCEPTIONS" "$(value "$out" msg=)"
-check "pix.stl.recon.bad.open" "000000002" "$(value "$out" openexc=)"
-out=$(bank "reconciliation.exceptions|REC-STL-BAD")
-case "$out" in
-    *AMT_MISMATCH*) stm=yes ;;
-    *) stm=no ;;
-esac
-check "pix.stl.recon.amount.mismatch.code" "yes" "$stm"
-case "$out" in
-    *STALE_SETTLE*) sts=yes ;;
-    *) sts=no ;;
-esac
-check "pix.stl.recon.stale.code" "yes" "$sts"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKF")
-check "pix.stl.recon.cycle.exc" "RECON-EXCEPTION" "$(value "$out" status=)"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1B|valor correto|150.00|OP01|COR|SKG")
-check "pix.stl.result.fixed" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.result.fixed.amount" "150.00" "$(value "$out" settledamt=)"
-out=$(bank "pix.stl.result|$stl2||SETTLED|SPIRES-2|ok|50.00|OP01|COR|SKH")
-check "pix.stl.result.in" "SETTLED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKI")
-check "pix.stl.finalize" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.finalize.post" "BALANCED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
-check "pix.stl.post.pay.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.post.pay.status" "POSTED" "$(value "$out" post=)"
-stl1jrnl=$(value "$out" journal=)
-case "$stl1jrnl" in
-    STL*) jok=yes ;;
-    *) jok=no ;;
-esac
-check "pix.stl.post.journal" "yes" "$jok"
-out=$(bank "pix.stl.post|$stl2|OP01|COR|SKK")
-check "pix.stl.post.rcv" "POSTED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
-check "pix.stl.post.replay" "Y" "$(value "$out" replay=)"
-out=$(bank "ledger.balance|$stlpayer")
-check "pix.stl.customer.untouched.payer" "489950.00" "$(value "$out" available=)"
-out=$(bank "ledger.balance|$stlpayee")
-check "pix.stl.customer.untouched.payee" "500230.00" "$(value "$out" available=)"
-grep -aq "|D|             150.00|${stlrt}|BRL|STL" var/journal/postings.log && paygl=yes || paygl=no
-check "pix.stl.gl.payable.debit" "yes" "$paygl"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-OK||OP01|COR|SKL")
-check "pix.stl.recon.ok" "BALANCED" "$(value "$out" msg=)"
-check "pix.stl.recon.ok.matched" "000000002" "$(value "$out" matched=)"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKM")
-check "pix.stl.cycle.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.cycle.recon" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.obligation.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.obligation.matched" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.pos.list")
-check "pix.stl.position.count" "0000001" "$(value "$out" positions=)"
-check "pix.stl.position.settledpay" "150.00" "$(value "$out" settledpay=)"
-check "pix.stl.position.settledrcv" "50.00" "$(value "$out" settledrcv=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKN")
-check "pix.stl.finalize.replay" "Y" "$(value "$out" replay=)"
 
 cp "$CFG_BAK" etc/bank.cfg
 
@@ -1266,146 +746,6 @@ out=$(bank "reconciliation.run|COLLECT|REC-COL-1")
 check "collections.recon" "BALANCED" "$(value "$out" msg=)"
 
 
-sed -i 's/business-date=.*/business-date=2026-10-02/' etc/bank.cfg
-reset
-bank "ledger.init" >/dev/null
-out=$(bank "pix.rt.create|12345678|KOF SELF|DEBITS|DPI|Y||OP01|COR|SRT1")
-check "pix.stl.rt.self" "ACTIVE" "$(value "$out" status=)"
-out=$(bank "pix.rt.create|87654321|BANCO OUTRO|DEBITS|DPI|N||OP01|COR|SRT2")
-stlrt=$(value "$out" id=)
-out=$(bank "customer.create|P|STL PAGADOR|CPF|123.456.789-09|19900101|OP01|SC1")
-out=$(bank "account.open|$(value "$out" id=)|DMND|BRL|500000|OP01|SC2|O1")
-stlpayer=$(value "$out" id=)
-out=$(bank "customer.create|P|STL RECEBEDOR|CPF|234.567.890-92|19900101|OP01|SC3")
-stlrecvc=$(value "$out" id=)
-out=$(bank "account.open|$stlrecvc|DMND|BRL|500000|OP01|SC4|O2")
-stlpayee=$(value "$out" id=)
-out=$(bank "pix.key.register|CPF|234.567.890-92|$stlpayee|$stlrecvc|OP01|COR|SK1")
-stlkey=$(value "$out" id=)
-out=$(bank "pix.key.seed|CPF|13579111140|$stlrt|FX000000001|FXC0000001|OUT CLIENTE|OP01|COR|SK2")
-check "pix.stl.seed" "00" "$(value "$out" rc=)"
-stlforeign=$(value "$out" keyid=)
-
-out=$(bank "pix.out.key|$stlkey|100.00|$stlpayer|||pix local|OP01|COR|SK3||Y")
-check "pix.stl.local.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|150.00|$stlpayer|||pix externo|OP01|COR|SK4||Y")
-stlout=$(value "$out" id=)
-check "pix.stl.out.posted" "POSTED" "$(value "$out" status=)"
-check "pix.stl.out.settle.pending" "PENDING" "$(value "$out" settle=)"
-out=$(bank "pix.in|50.00|$stlpayee|$stlrt|E2ESTL000000000000000000001|EXT-STL-1|PAGADOR EXTERNO|OP01|COR|SK5")
-stlin=$(value "$out" id=)
-check "pix.stl.in.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|70.00|$stlpayer|||a devolver|OP01|COR|SK6||Y")
-stldvl=$(value "$out" id=)
-out=$(bank "pix.devol|$stldvl|70.00|estorno integral|OP01|COR|SK7")
-check "pix.stl.devol.rc" "00" "$(value "$out" rc=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.status" "DEVOLVED" "$(value "$out" status=)"
-
-out=$(bank "pix.cycle.open|20261002|BRL|OP01|COR|SK8")
-check "pix.stl.cycle.open" "00" "$(value "$out" rc=)"
-check "pix.stl.cycle.status" "OPEN" "$(value "$out" status=)"
-cyc=$(value "$out" cycle=)
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.accrue.cycle" "$cyc" "$(value "$out" cycle=)"
-out=$(bank "pix.get|$stlout")
-check "pix.stl.out.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stlin")
-check "pix.stl.in.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.excluded" "NOT-APPLICABLE" "$(value "$out" settle=)"
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.replay" "00" "$(value "$out" rc=)"
-
-out=$(bank "pix.cycle.close|$cyc|OP01|COR|SKA")
-check "pix.stl.close" "CLOSED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.calc|$cyc|OP01|COR|SKB")
-check "pix.stl.calc" "CALCULATED" "$(value "$out" status=)"
-check "pix.stl.calc.txns" "0000003" "$(value "$out" txns=)"
-check "pix.stl.calc.grosspay" "150.00" "$(value "$out" grosspay=)"
-check "pix.stl.calc.grossrcv" "120.00" "$(value "$out" grossrcv=)"
-check "pix.stl.calc.net" "30.00" "$(value "$out" net=)"
-check "pix.stl.calc.side" "PAYABLE" "$(value "$out" side=)"
-check "pix.stl.calc.parties" "0000001" "$(value "$out" parties=)"
-
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.cycle.submit" "SUBMITTED" "$(value "$out" status=)"
-out=$(bank "pix.stl.list|$cyc")
-check "pix.stl.submit.count" "0000002" "$(value "$out" settlements=)"
-check "pix.stl.submit.status" "SUBMITTED" "$(grep -c 'status=SUBMITTED' <<<"$out" | tr -d ' ')"
-stl1=$(grep -F "side=PAYABLE" -B2 <<<"$out" | grep -F "settlement=" | head -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-stl2=$(bank "pix.stl.list|$cyc" | grep -F "settlement=" | tail -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.get.participant" "$stlrt" "$(value "$out" participant=)"
-check "pix.stl.get.extref" "SPIS-00000000001" "$(value "$out" extref=)"
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.submit.replay.attempts" "0001" "$(bank "pix.stl.get|$stl1" | grep -F "attempts=" | sed 's/^attempts=//;s/[[:space:]]*$//')"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1|valor divergente|140.00|OP01|COR|SKD")
-check "pix.stl.result.mismatch.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.result.mismatch.settled" "140.00" "$(value "$out" settledamt=)"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-BAD||OP01|COR|SKE")
-check "pix.stl.recon.bad.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.recon.bad.status" "EXCEPTIONS" "$(value "$out" msg=)"
-check "pix.stl.recon.bad.open" "000000002" "$(value "$out" openexc=)"
-out=$(bank "reconciliation.exceptions|REC-STL-BAD")
-case "$out" in
-    *AMT_MISMATCH*) stm=yes ;;
-    *) stm=no ;;
-esac
-check "pix.stl.recon.amount.mismatch.code" "yes" "$stm"
-case "$out" in
-    *STALE_SETTLE*) sts=yes ;;
-    *) sts=no ;;
-esac
-check "pix.stl.recon.stale.code" "yes" "$sts"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKF")
-check "pix.stl.recon.cycle.exc" "RECON-EXCEPTION" "$(value "$out" status=)"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1B|valor correto|150.00|OP01|COR|SKG")
-check "pix.stl.result.fixed" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.result.fixed.amount" "150.00" "$(value "$out" settledamt=)"
-out=$(bank "pix.stl.result|$stl2||SETTLED|SPIRES-2|ok|50.00|OP01|COR|SKH")
-check "pix.stl.result.in" "SETTLED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKI")
-check "pix.stl.finalize" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.finalize.post" "BALANCED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
-check "pix.stl.post.pay.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.post.pay.status" "POSTED" "$(value "$out" post=)"
-stl1jrnl=$(value "$out" journal=)
-case "$stl1jrnl" in
-    STL*) jok=yes ;;
-    *) jok=no ;;
-esac
-check "pix.stl.post.journal" "yes" "$jok"
-out=$(bank "pix.stl.post|$stl2|OP01|COR|SKK")
-check "pix.stl.post.rcv" "POSTED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
-check "pix.stl.post.replay" "Y" "$(value "$out" replay=)"
-out=$(bank "ledger.balance|$stlpayer")
-check "pix.stl.customer.untouched.payer" "489950.00" "$(value "$out" available=)"
-out=$(bank "ledger.balance|$stlpayee")
-check "pix.stl.customer.untouched.payee" "500230.00" "$(value "$out" available=)"
-grep -aq "|D|             150.00|${stlrt}|BRL|STL" var/journal/postings.log && paygl=yes || paygl=no
-check "pix.stl.gl.payable.debit" "yes" "$paygl"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-OK||OP01|COR|SKL")
-check "pix.stl.recon.ok" "BALANCED" "$(value "$out" msg=)"
-check "pix.stl.recon.ok.matched" "000000002" "$(value "$out" matched=)"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKM")
-check "pix.stl.cycle.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.cycle.recon" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.obligation.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.obligation.matched" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.pos.list")
-check "pix.stl.position.count" "0000001" "$(value "$out" positions=)"
-check "pix.stl.position.settledpay" "150.00" "$(value "$out" settledpay=)"
-check "pix.stl.position.settledrcv" "50.00" "$(value "$out" settledrcv=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKN")
-check "pix.stl.finalize.replay" "Y" "$(value "$out" replay=)"
-
 cp "$CFG_BAK" etc/bank.cfg
 
 reset
@@ -1432,146 +772,6 @@ out=$(bank "collections.case.eligible|N00000000009")
 check "collections.eligible.not.found" "23" "$(value "$out" rc=)"
 
 
-sed -i 's/business-date=.*/business-date=2026-10-02/' etc/bank.cfg
-reset
-bank "ledger.init" >/dev/null
-out=$(bank "pix.rt.create|12345678|KOF SELF|DEBITS|DPI|Y||OP01|COR|SRT1")
-check "pix.stl.rt.self" "ACTIVE" "$(value "$out" status=)"
-out=$(bank "pix.rt.create|87654321|BANCO OUTRO|DEBITS|DPI|N||OP01|COR|SRT2")
-stlrt=$(value "$out" id=)
-out=$(bank "customer.create|P|STL PAGADOR|CPF|123.456.789-09|19900101|OP01|SC1")
-out=$(bank "account.open|$(value "$out" id=)|DMND|BRL|500000|OP01|SC2|O1")
-stlpayer=$(value "$out" id=)
-out=$(bank "customer.create|P|STL RECEBEDOR|CPF|234.567.890-92|19900101|OP01|SC3")
-stlrecvc=$(value "$out" id=)
-out=$(bank "account.open|$stlrecvc|DMND|BRL|500000|OP01|SC4|O2")
-stlpayee=$(value "$out" id=)
-out=$(bank "pix.key.register|CPF|234.567.890-92|$stlpayee|$stlrecvc|OP01|COR|SK1")
-stlkey=$(value "$out" id=)
-out=$(bank "pix.key.seed|CPF|13579111140|$stlrt|FX000000001|FXC0000001|OUT CLIENTE|OP01|COR|SK2")
-check "pix.stl.seed" "00" "$(value "$out" rc=)"
-stlforeign=$(value "$out" keyid=)
-
-out=$(bank "pix.out.key|$stlkey|100.00|$stlpayer|||pix local|OP01|COR|SK3||Y")
-check "pix.stl.local.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|150.00|$stlpayer|||pix externo|OP01|COR|SK4||Y")
-stlout=$(value "$out" id=)
-check "pix.stl.out.posted" "POSTED" "$(value "$out" status=)"
-check "pix.stl.out.settle.pending" "PENDING" "$(value "$out" settle=)"
-out=$(bank "pix.in|50.00|$stlpayee|$stlrt|E2ESTL000000000000000000001|EXT-STL-1|PAGADOR EXTERNO|OP01|COR|SK5")
-stlin=$(value "$out" id=)
-check "pix.stl.in.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|70.00|$stlpayer|||a devolver|OP01|COR|SK6||Y")
-stldvl=$(value "$out" id=)
-out=$(bank "pix.devol|$stldvl|70.00|estorno integral|OP01|COR|SK7")
-check "pix.stl.devol.rc" "00" "$(value "$out" rc=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.status" "DEVOLVED" "$(value "$out" status=)"
-
-out=$(bank "pix.cycle.open|20261002|BRL|OP01|COR|SK8")
-check "pix.stl.cycle.open" "00" "$(value "$out" rc=)"
-check "pix.stl.cycle.status" "OPEN" "$(value "$out" status=)"
-cyc=$(value "$out" cycle=)
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.accrue.cycle" "$cyc" "$(value "$out" cycle=)"
-out=$(bank "pix.get|$stlout")
-check "pix.stl.out.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stlin")
-check "pix.stl.in.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.excluded" "NOT-APPLICABLE" "$(value "$out" settle=)"
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.replay" "00" "$(value "$out" rc=)"
-
-out=$(bank "pix.cycle.close|$cyc|OP01|COR|SKA")
-check "pix.stl.close" "CLOSED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.calc|$cyc|OP01|COR|SKB")
-check "pix.stl.calc" "CALCULATED" "$(value "$out" status=)"
-check "pix.stl.calc.txns" "0000003" "$(value "$out" txns=)"
-check "pix.stl.calc.grosspay" "150.00" "$(value "$out" grosspay=)"
-check "pix.stl.calc.grossrcv" "120.00" "$(value "$out" grossrcv=)"
-check "pix.stl.calc.net" "30.00" "$(value "$out" net=)"
-check "pix.stl.calc.side" "PAYABLE" "$(value "$out" side=)"
-check "pix.stl.calc.parties" "0000001" "$(value "$out" parties=)"
-
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.cycle.submit" "SUBMITTED" "$(value "$out" status=)"
-out=$(bank "pix.stl.list|$cyc")
-check "pix.stl.submit.count" "0000002" "$(value "$out" settlements=)"
-check "pix.stl.submit.status" "SUBMITTED" "$(grep -c 'status=SUBMITTED' <<<"$out" | tr -d ' ')"
-stl1=$(grep -F "side=PAYABLE" -B2 <<<"$out" | grep -F "settlement=" | head -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-stl2=$(bank "pix.stl.list|$cyc" | grep -F "settlement=" | tail -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.get.participant" "$stlrt" "$(value "$out" participant=)"
-check "pix.stl.get.extref" "SPIS-00000000001" "$(value "$out" extref=)"
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.submit.replay.attempts" "0001" "$(bank "pix.stl.get|$stl1" | grep -F "attempts=" | sed 's/^attempts=//;s/[[:space:]]*$//')"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1|valor divergente|140.00|OP01|COR|SKD")
-check "pix.stl.result.mismatch.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.result.mismatch.settled" "140.00" "$(value "$out" settledamt=)"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-BAD||OP01|COR|SKE")
-check "pix.stl.recon.bad.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.recon.bad.status" "EXCEPTIONS" "$(value "$out" msg=)"
-check "pix.stl.recon.bad.open" "000000002" "$(value "$out" openexc=)"
-out=$(bank "reconciliation.exceptions|REC-STL-BAD")
-case "$out" in
-    *AMT_MISMATCH*) stm=yes ;;
-    *) stm=no ;;
-esac
-check "pix.stl.recon.amount.mismatch.code" "yes" "$stm"
-case "$out" in
-    *STALE_SETTLE*) sts=yes ;;
-    *) sts=no ;;
-esac
-check "pix.stl.recon.stale.code" "yes" "$sts"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKF")
-check "pix.stl.recon.cycle.exc" "RECON-EXCEPTION" "$(value "$out" status=)"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1B|valor correto|150.00|OP01|COR|SKG")
-check "pix.stl.result.fixed" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.result.fixed.amount" "150.00" "$(value "$out" settledamt=)"
-out=$(bank "pix.stl.result|$stl2||SETTLED|SPIRES-2|ok|50.00|OP01|COR|SKH")
-check "pix.stl.result.in" "SETTLED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKI")
-check "pix.stl.finalize" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.finalize.post" "BALANCED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
-check "pix.stl.post.pay.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.post.pay.status" "POSTED" "$(value "$out" post=)"
-stl1jrnl=$(value "$out" journal=)
-case "$stl1jrnl" in
-    STL*) jok=yes ;;
-    *) jok=no ;;
-esac
-check "pix.stl.post.journal" "yes" "$jok"
-out=$(bank "pix.stl.post|$stl2|OP01|COR|SKK")
-check "pix.stl.post.rcv" "POSTED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
-check "pix.stl.post.replay" "Y" "$(value "$out" replay=)"
-out=$(bank "ledger.balance|$stlpayer")
-check "pix.stl.customer.untouched.payer" "489950.00" "$(value "$out" available=)"
-out=$(bank "ledger.balance|$stlpayee")
-check "pix.stl.customer.untouched.payee" "500230.00" "$(value "$out" available=)"
-grep -aq "|D|             150.00|${stlrt}|BRL|STL" var/journal/postings.log && paygl=yes || paygl=no
-check "pix.stl.gl.payable.debit" "yes" "$paygl"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-OK||OP01|COR|SKL")
-check "pix.stl.recon.ok" "BALANCED" "$(value "$out" msg=)"
-check "pix.stl.recon.ok.matched" "000000002" "$(value "$out" matched=)"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKM")
-check "pix.stl.cycle.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.cycle.recon" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.obligation.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.obligation.matched" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.pos.list")
-check "pix.stl.position.count" "0000001" "$(value "$out" positions=)"
-check "pix.stl.position.settledpay" "150.00" "$(value "$out" settledpay=)"
-check "pix.stl.position.settledrcv" "50.00" "$(value "$out" settledrcv=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKN")
-check "pix.stl.finalize.replay" "Y" "$(value "$out" replay=)"
-
 cp "$CFG_BAK" etc/bank.cfg
 
 reset
@@ -1586,146 +786,6 @@ out=$(bank "ledger.trial")
 check "collections.trial.balanced" "00" "$(value "$out" rc=)"
 out=$(bank "reconciliation.run|COLLECT|REC-COL-2")
 check "collections.recon.after.recovery" "BALANCED" "$(value "$out" msg=)"
-
-sed -i 's/business-date=.*/business-date=2026-10-02/' etc/bank.cfg
-reset
-bank "ledger.init" >/dev/null
-out=$(bank "pix.rt.create|12345678|KOF SELF|DEBITS|DPI|Y||OP01|COR|SRT1")
-check "pix.stl.rt.self" "ACTIVE" "$(value "$out" status=)"
-out=$(bank "pix.rt.create|87654321|BANCO OUTRO|DEBITS|DPI|N||OP01|COR|SRT2")
-stlrt=$(value "$out" id=)
-out=$(bank "customer.create|P|STL PAGADOR|CPF|123.456.789-09|19900101|OP01|SC1")
-out=$(bank "account.open|$(value "$out" id=)|DMND|BRL|500000|OP01|SC2|O1")
-stlpayer=$(value "$out" id=)
-out=$(bank "customer.create|P|STL RECEBEDOR|CPF|234.567.890-92|19900101|OP01|SC3")
-stlrecvc=$(value "$out" id=)
-out=$(bank "account.open|$stlrecvc|DMND|BRL|500000|OP01|SC4|O2")
-stlpayee=$(value "$out" id=)
-out=$(bank "pix.key.register|CPF|234.567.890-92|$stlpayee|$stlrecvc|OP01|COR|SK1")
-stlkey=$(value "$out" id=)
-out=$(bank "pix.key.seed|CPF|13579111140|$stlrt|FX000000001|FXC0000001|OUT CLIENTE|OP01|COR|SK2")
-check "pix.stl.seed" "00" "$(value "$out" rc=)"
-stlforeign=$(value "$out" keyid=)
-
-out=$(bank "pix.out.key|$stlkey|100.00|$stlpayer|||pix local|OP01|COR|SK3||Y")
-check "pix.stl.local.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|150.00|$stlpayer|||pix externo|OP01|COR|SK4||Y")
-stlout=$(value "$out" id=)
-check "pix.stl.out.posted" "POSTED" "$(value "$out" status=)"
-check "pix.stl.out.settle.pending" "PENDING" "$(value "$out" settle=)"
-out=$(bank "pix.in|50.00|$stlpayee|$stlrt|E2ESTL000000000000000000001|EXT-STL-1|PAGADOR EXTERNO|OP01|COR|SK5")
-stlin=$(value "$out" id=)
-check "pix.stl.in.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|70.00|$stlpayer|||a devolver|OP01|COR|SK6||Y")
-stldvl=$(value "$out" id=)
-out=$(bank "pix.devol|$stldvl|70.00|estorno integral|OP01|COR|SK7")
-check "pix.stl.devol.rc" "00" "$(value "$out" rc=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.status" "DEVOLVED" "$(value "$out" status=)"
-
-out=$(bank "pix.cycle.open|20261002|BRL|OP01|COR|SK8")
-check "pix.stl.cycle.open" "00" "$(value "$out" rc=)"
-check "pix.stl.cycle.status" "OPEN" "$(value "$out" status=)"
-cyc=$(value "$out" cycle=)
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.accrue.cycle" "$cyc" "$(value "$out" cycle=)"
-out=$(bank "pix.get|$stlout")
-check "pix.stl.out.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stlin")
-check "pix.stl.in.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.excluded" "NOT-APPLICABLE" "$(value "$out" settle=)"
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.replay" "00" "$(value "$out" rc=)"
-
-out=$(bank "pix.cycle.close|$cyc|OP01|COR|SKA")
-check "pix.stl.close" "CLOSED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.calc|$cyc|OP01|COR|SKB")
-check "pix.stl.calc" "CALCULATED" "$(value "$out" status=)"
-check "pix.stl.calc.txns" "0000003" "$(value "$out" txns=)"
-check "pix.stl.calc.grosspay" "150.00" "$(value "$out" grosspay=)"
-check "pix.stl.calc.grossrcv" "120.00" "$(value "$out" grossrcv=)"
-check "pix.stl.calc.net" "30.00" "$(value "$out" net=)"
-check "pix.stl.calc.side" "PAYABLE" "$(value "$out" side=)"
-check "pix.stl.calc.parties" "0000001" "$(value "$out" parties=)"
-
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.cycle.submit" "SUBMITTED" "$(value "$out" status=)"
-out=$(bank "pix.stl.list|$cyc")
-check "pix.stl.submit.count" "0000002" "$(value "$out" settlements=)"
-check "pix.stl.submit.status" "SUBMITTED" "$(grep -c 'status=SUBMITTED' <<<"$out" | tr -d ' ')"
-stl1=$(grep -F "side=PAYABLE" -B2 <<<"$out" | grep -F "settlement=" | head -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-stl2=$(bank "pix.stl.list|$cyc" | grep -F "settlement=" | tail -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.get.participant" "$stlrt" "$(value "$out" participant=)"
-check "pix.stl.get.extref" "SPIS-00000000001" "$(value "$out" extref=)"
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.submit.replay.attempts" "0001" "$(bank "pix.stl.get|$stl1" | grep -F "attempts=" | sed 's/^attempts=//;s/[[:space:]]*$//')"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1|valor divergente|140.00|OP01|COR|SKD")
-check "pix.stl.result.mismatch.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.result.mismatch.settled" "140.00" "$(value "$out" settledamt=)"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-BAD||OP01|COR|SKE")
-check "pix.stl.recon.bad.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.recon.bad.status" "EXCEPTIONS" "$(value "$out" msg=)"
-check "pix.stl.recon.bad.open" "000000002" "$(value "$out" openexc=)"
-out=$(bank "reconciliation.exceptions|REC-STL-BAD")
-case "$out" in
-    *AMT_MISMATCH*) stm=yes ;;
-    *) stm=no ;;
-esac
-check "pix.stl.recon.amount.mismatch.code" "yes" "$stm"
-case "$out" in
-    *STALE_SETTLE*) sts=yes ;;
-    *) sts=no ;;
-esac
-check "pix.stl.recon.stale.code" "yes" "$sts"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKF")
-check "pix.stl.recon.cycle.exc" "RECON-EXCEPTION" "$(value "$out" status=)"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1B|valor correto|150.00|OP01|COR|SKG")
-check "pix.stl.result.fixed" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.result.fixed.amount" "150.00" "$(value "$out" settledamt=)"
-out=$(bank "pix.stl.result|$stl2||SETTLED|SPIRES-2|ok|50.00|OP01|COR|SKH")
-check "pix.stl.result.in" "SETTLED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKI")
-check "pix.stl.finalize" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.finalize.post" "BALANCED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
-check "pix.stl.post.pay.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.post.pay.status" "POSTED" "$(value "$out" post=)"
-stl1jrnl=$(value "$out" journal=)
-case "$stl1jrnl" in
-    STL*) jok=yes ;;
-    *) jok=no ;;
-esac
-check "pix.stl.post.journal" "yes" "$jok"
-out=$(bank "pix.stl.post|$stl2|OP01|COR|SKK")
-check "pix.stl.post.rcv" "POSTED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
-check "pix.stl.post.replay" "Y" "$(value "$out" replay=)"
-out=$(bank "ledger.balance|$stlpayer")
-check "pix.stl.customer.untouched.payer" "489950.00" "$(value "$out" available=)"
-out=$(bank "ledger.balance|$stlpayee")
-check "pix.stl.customer.untouched.payee" "500230.00" "$(value "$out" available=)"
-grep -aq "|D|             150.00|${stlrt}|BRL|STL" var/journal/postings.log && paygl=yes || paygl=no
-check "pix.stl.gl.payable.debit" "yes" "$paygl"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-OK||OP01|COR|SKL")
-check "pix.stl.recon.ok" "BALANCED" "$(value "$out" msg=)"
-check "pix.stl.recon.ok.matched" "000000002" "$(value "$out" matched=)"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKM")
-check "pix.stl.cycle.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.cycle.recon" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.obligation.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.obligation.matched" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.pos.list")
-check "pix.stl.position.count" "0000001" "$(value "$out" positions=)"
-check "pix.stl.position.settledpay" "150.00" "$(value "$out" settledpay=)"
-check "pix.stl.position.settledrcv" "50.00" "$(value "$out" settledrcv=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKN")
-check "pix.stl.finalize.replay" "Y" "$(value "$out" replay=)"
 
 cp "$CFG_BAK" etc/bank.cfg
 
@@ -1756,146 +816,6 @@ out=$(bank "reconciliation.run|COLLECT|REC-COL-PE")
 check "collections.recon.promise" "BALANCED" "$(value "$out" msg=)"
 
 
-sed -i 's/business-date=.*/business-date=2026-10-02/' etc/bank.cfg
-reset
-bank "ledger.init" >/dev/null
-out=$(bank "pix.rt.create|12345678|KOF SELF|DEBITS|DPI|Y||OP01|COR|SRT1")
-check "pix.stl.rt.self" "ACTIVE" "$(value "$out" status=)"
-out=$(bank "pix.rt.create|87654321|BANCO OUTRO|DEBITS|DPI|N||OP01|COR|SRT2")
-stlrt=$(value "$out" id=)
-out=$(bank "customer.create|P|STL PAGADOR|CPF|123.456.789-09|19900101|OP01|SC1")
-out=$(bank "account.open|$(value "$out" id=)|DMND|BRL|500000|OP01|SC2|O1")
-stlpayer=$(value "$out" id=)
-out=$(bank "customer.create|P|STL RECEBEDOR|CPF|234.567.890-92|19900101|OP01|SC3")
-stlrecvc=$(value "$out" id=)
-out=$(bank "account.open|$stlrecvc|DMND|BRL|500000|OP01|SC4|O2")
-stlpayee=$(value "$out" id=)
-out=$(bank "pix.key.register|CPF|234.567.890-92|$stlpayee|$stlrecvc|OP01|COR|SK1")
-stlkey=$(value "$out" id=)
-out=$(bank "pix.key.seed|CPF|13579111140|$stlrt|FX000000001|FXC0000001|OUT CLIENTE|OP01|COR|SK2")
-check "pix.stl.seed" "00" "$(value "$out" rc=)"
-stlforeign=$(value "$out" keyid=)
-
-out=$(bank "pix.out.key|$stlkey|100.00|$stlpayer|||pix local|OP01|COR|SK3||Y")
-check "pix.stl.local.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|150.00|$stlpayer|||pix externo|OP01|COR|SK4||Y")
-stlout=$(value "$out" id=)
-check "pix.stl.out.posted" "POSTED" "$(value "$out" status=)"
-check "pix.stl.out.settle.pending" "PENDING" "$(value "$out" settle=)"
-out=$(bank "pix.in|50.00|$stlpayee|$stlrt|E2ESTL000000000000000000001|EXT-STL-1|PAGADOR EXTERNO|OP01|COR|SK5")
-stlin=$(value "$out" id=)
-check "pix.stl.in.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|70.00|$stlpayer|||a devolver|OP01|COR|SK6||Y")
-stldvl=$(value "$out" id=)
-out=$(bank "pix.devol|$stldvl|70.00|estorno integral|OP01|COR|SK7")
-check "pix.stl.devol.rc" "00" "$(value "$out" rc=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.status" "DEVOLVED" "$(value "$out" status=)"
-
-out=$(bank "pix.cycle.open|20261002|BRL|OP01|COR|SK8")
-check "pix.stl.cycle.open" "00" "$(value "$out" rc=)"
-check "pix.stl.cycle.status" "OPEN" "$(value "$out" status=)"
-cyc=$(value "$out" cycle=)
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.accrue.cycle" "$cyc" "$(value "$out" cycle=)"
-out=$(bank "pix.get|$stlout")
-check "pix.stl.out.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stlin")
-check "pix.stl.in.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.excluded" "NOT-APPLICABLE" "$(value "$out" settle=)"
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.replay" "00" "$(value "$out" rc=)"
-
-out=$(bank "pix.cycle.close|$cyc|OP01|COR|SKA")
-check "pix.stl.close" "CLOSED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.calc|$cyc|OP01|COR|SKB")
-check "pix.stl.calc" "CALCULATED" "$(value "$out" status=)"
-check "pix.stl.calc.txns" "0000003" "$(value "$out" txns=)"
-check "pix.stl.calc.grosspay" "150.00" "$(value "$out" grosspay=)"
-check "pix.stl.calc.grossrcv" "120.00" "$(value "$out" grossrcv=)"
-check "pix.stl.calc.net" "30.00" "$(value "$out" net=)"
-check "pix.stl.calc.side" "PAYABLE" "$(value "$out" side=)"
-check "pix.stl.calc.parties" "0000001" "$(value "$out" parties=)"
-
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.cycle.submit" "SUBMITTED" "$(value "$out" status=)"
-out=$(bank "pix.stl.list|$cyc")
-check "pix.stl.submit.count" "0000002" "$(value "$out" settlements=)"
-check "pix.stl.submit.status" "SUBMITTED" "$(grep -c 'status=SUBMITTED' <<<"$out" | tr -d ' ')"
-stl1=$(grep -F "side=PAYABLE" -B2 <<<"$out" | grep -F "settlement=" | head -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-stl2=$(bank "pix.stl.list|$cyc" | grep -F "settlement=" | tail -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.get.participant" "$stlrt" "$(value "$out" participant=)"
-check "pix.stl.get.extref" "SPIS-00000000001" "$(value "$out" extref=)"
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.submit.replay.attempts" "0001" "$(bank "pix.stl.get|$stl1" | grep -F "attempts=" | sed 's/^attempts=//;s/[[:space:]]*$//')"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1|valor divergente|140.00|OP01|COR|SKD")
-check "pix.stl.result.mismatch.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.result.mismatch.settled" "140.00" "$(value "$out" settledamt=)"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-BAD||OP01|COR|SKE")
-check "pix.stl.recon.bad.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.recon.bad.status" "EXCEPTIONS" "$(value "$out" msg=)"
-check "pix.stl.recon.bad.open" "000000002" "$(value "$out" openexc=)"
-out=$(bank "reconciliation.exceptions|REC-STL-BAD")
-case "$out" in
-    *AMT_MISMATCH*) stm=yes ;;
-    *) stm=no ;;
-esac
-check "pix.stl.recon.amount.mismatch.code" "yes" "$stm"
-case "$out" in
-    *STALE_SETTLE*) sts=yes ;;
-    *) sts=no ;;
-esac
-check "pix.stl.recon.stale.code" "yes" "$sts"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKF")
-check "pix.stl.recon.cycle.exc" "RECON-EXCEPTION" "$(value "$out" status=)"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1B|valor correto|150.00|OP01|COR|SKG")
-check "pix.stl.result.fixed" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.result.fixed.amount" "150.00" "$(value "$out" settledamt=)"
-out=$(bank "pix.stl.result|$stl2||SETTLED|SPIRES-2|ok|50.00|OP01|COR|SKH")
-check "pix.stl.result.in" "SETTLED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKI")
-check "pix.stl.finalize" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.finalize.post" "BALANCED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
-check "pix.stl.post.pay.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.post.pay.status" "POSTED" "$(value "$out" post=)"
-stl1jrnl=$(value "$out" journal=)
-case "$stl1jrnl" in
-    STL*) jok=yes ;;
-    *) jok=no ;;
-esac
-check "pix.stl.post.journal" "yes" "$jok"
-out=$(bank "pix.stl.post|$stl2|OP01|COR|SKK")
-check "pix.stl.post.rcv" "POSTED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
-check "pix.stl.post.replay" "Y" "$(value "$out" replay=)"
-out=$(bank "ledger.balance|$stlpayer")
-check "pix.stl.customer.untouched.payer" "489950.00" "$(value "$out" available=)"
-out=$(bank "ledger.balance|$stlpayee")
-check "pix.stl.customer.untouched.payee" "500230.00" "$(value "$out" available=)"
-grep -aq "|D|             150.00|${stlrt}|BRL|STL" var/journal/postings.log && paygl=yes || paygl=no
-check "pix.stl.gl.payable.debit" "yes" "$paygl"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-OK||OP01|COR|SKL")
-check "pix.stl.recon.ok" "BALANCED" "$(value "$out" msg=)"
-check "pix.stl.recon.ok.matched" "000000002" "$(value "$out" matched=)"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKM")
-check "pix.stl.cycle.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.cycle.recon" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.obligation.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.obligation.matched" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.pos.list")
-check "pix.stl.position.count" "0000001" "$(value "$out" positions=)"
-check "pix.stl.position.settledpay" "150.00" "$(value "$out" settledpay=)"
-check "pix.stl.position.settledrcv" "50.00" "$(value "$out" settledrcv=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKN")
-check "pix.stl.finalize.replay" "Y" "$(value "$out" replay=)"
-
 cp "$CFG_BAK" etc/bank.cfg
 
 reset
@@ -1913,146 +833,6 @@ check "collections.case.after.expire" "INCO" "$(value "$out" status=)"
 out=$(bank "collections.promise.create|K00000000001|5000|20270310|PROM|OP01|PX5|PXR5")
 check "collections.promise.new.after.expire" "00" "$(value "$out" rc=)"
 
-
-sed -i 's/business-date=.*/business-date=2026-10-02/' etc/bank.cfg
-reset
-bank "ledger.init" >/dev/null
-out=$(bank "pix.rt.create|12345678|KOF SELF|DEBITS|DPI|Y||OP01|COR|SRT1")
-check "pix.stl.rt.self" "ACTIVE" "$(value "$out" status=)"
-out=$(bank "pix.rt.create|87654321|BANCO OUTRO|DEBITS|DPI|N||OP01|COR|SRT2")
-stlrt=$(value "$out" id=)
-out=$(bank "customer.create|P|STL PAGADOR|CPF|123.456.789-09|19900101|OP01|SC1")
-out=$(bank "account.open|$(value "$out" id=)|DMND|BRL|500000|OP01|SC2|O1")
-stlpayer=$(value "$out" id=)
-out=$(bank "customer.create|P|STL RECEBEDOR|CPF|234.567.890-92|19900101|OP01|SC3")
-stlrecvc=$(value "$out" id=)
-out=$(bank "account.open|$stlrecvc|DMND|BRL|500000|OP01|SC4|O2")
-stlpayee=$(value "$out" id=)
-out=$(bank "pix.key.register|CPF|234.567.890-92|$stlpayee|$stlrecvc|OP01|COR|SK1")
-stlkey=$(value "$out" id=)
-out=$(bank "pix.key.seed|CPF|13579111140|$stlrt|FX000000001|FXC0000001|OUT CLIENTE|OP01|COR|SK2")
-check "pix.stl.seed" "00" "$(value "$out" rc=)"
-stlforeign=$(value "$out" keyid=)
-
-out=$(bank "pix.out.key|$stlkey|100.00|$stlpayer|||pix local|OP01|COR|SK3||Y")
-check "pix.stl.local.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|150.00|$stlpayer|||pix externo|OP01|COR|SK4||Y")
-stlout=$(value "$out" id=)
-check "pix.stl.out.posted" "POSTED" "$(value "$out" status=)"
-check "pix.stl.out.settle.pending" "PENDING" "$(value "$out" settle=)"
-out=$(bank "pix.in|50.00|$stlpayee|$stlrt|E2ESTL000000000000000000001|EXT-STL-1|PAGADOR EXTERNO|OP01|COR|SK5")
-stlin=$(value "$out" id=)
-check "pix.stl.in.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|70.00|$stlpayer|||a devolver|OP01|COR|SK6||Y")
-stldvl=$(value "$out" id=)
-out=$(bank "pix.devol|$stldvl|70.00|estorno integral|OP01|COR|SK7")
-check "pix.stl.devol.rc" "00" "$(value "$out" rc=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.status" "DEVOLVED" "$(value "$out" status=)"
-
-out=$(bank "pix.cycle.open|20261002|BRL|OP01|COR|SK8")
-check "pix.stl.cycle.open" "00" "$(value "$out" rc=)"
-check "pix.stl.cycle.status" "OPEN" "$(value "$out" status=)"
-cyc=$(value "$out" cycle=)
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.accrue.cycle" "$cyc" "$(value "$out" cycle=)"
-out=$(bank "pix.get|$stlout")
-check "pix.stl.out.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stlin")
-check "pix.stl.in.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.excluded" "NOT-APPLICABLE" "$(value "$out" settle=)"
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.replay" "00" "$(value "$out" rc=)"
-
-out=$(bank "pix.cycle.close|$cyc|OP01|COR|SKA")
-check "pix.stl.close" "CLOSED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.calc|$cyc|OP01|COR|SKB")
-check "pix.stl.calc" "CALCULATED" "$(value "$out" status=)"
-check "pix.stl.calc.txns" "0000003" "$(value "$out" txns=)"
-check "pix.stl.calc.grosspay" "150.00" "$(value "$out" grosspay=)"
-check "pix.stl.calc.grossrcv" "120.00" "$(value "$out" grossrcv=)"
-check "pix.stl.calc.net" "30.00" "$(value "$out" net=)"
-check "pix.stl.calc.side" "PAYABLE" "$(value "$out" side=)"
-check "pix.stl.calc.parties" "0000001" "$(value "$out" parties=)"
-
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.cycle.submit" "SUBMITTED" "$(value "$out" status=)"
-out=$(bank "pix.stl.list|$cyc")
-check "pix.stl.submit.count" "0000002" "$(value "$out" settlements=)"
-check "pix.stl.submit.status" "SUBMITTED" "$(grep -c 'status=SUBMITTED' <<<"$out" | tr -d ' ')"
-stl1=$(grep -F "side=PAYABLE" -B2 <<<"$out" | grep -F "settlement=" | head -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-stl2=$(bank "pix.stl.list|$cyc" | grep -F "settlement=" | tail -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.get.participant" "$stlrt" "$(value "$out" participant=)"
-check "pix.stl.get.extref" "SPIS-00000000001" "$(value "$out" extref=)"
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.submit.replay.attempts" "0001" "$(bank "pix.stl.get|$stl1" | grep -F "attempts=" | sed 's/^attempts=//;s/[[:space:]]*$//')"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1|valor divergente|140.00|OP01|COR|SKD")
-check "pix.stl.result.mismatch.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.result.mismatch.settled" "140.00" "$(value "$out" settledamt=)"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-BAD||OP01|COR|SKE")
-check "pix.stl.recon.bad.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.recon.bad.status" "EXCEPTIONS" "$(value "$out" msg=)"
-check "pix.stl.recon.bad.open" "000000002" "$(value "$out" openexc=)"
-out=$(bank "reconciliation.exceptions|REC-STL-BAD")
-case "$out" in
-    *AMT_MISMATCH*) stm=yes ;;
-    *) stm=no ;;
-esac
-check "pix.stl.recon.amount.mismatch.code" "yes" "$stm"
-case "$out" in
-    *STALE_SETTLE*) sts=yes ;;
-    *) sts=no ;;
-esac
-check "pix.stl.recon.stale.code" "yes" "$sts"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKF")
-check "pix.stl.recon.cycle.exc" "RECON-EXCEPTION" "$(value "$out" status=)"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1B|valor correto|150.00|OP01|COR|SKG")
-check "pix.stl.result.fixed" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.result.fixed.amount" "150.00" "$(value "$out" settledamt=)"
-out=$(bank "pix.stl.result|$stl2||SETTLED|SPIRES-2|ok|50.00|OP01|COR|SKH")
-check "pix.stl.result.in" "SETTLED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKI")
-check "pix.stl.finalize" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.finalize.post" "BALANCED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
-check "pix.stl.post.pay.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.post.pay.status" "POSTED" "$(value "$out" post=)"
-stl1jrnl=$(value "$out" journal=)
-case "$stl1jrnl" in
-    STL*) jok=yes ;;
-    *) jok=no ;;
-esac
-check "pix.stl.post.journal" "yes" "$jok"
-out=$(bank "pix.stl.post|$stl2|OP01|COR|SKK")
-check "pix.stl.post.rcv" "POSTED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
-check "pix.stl.post.replay" "Y" "$(value "$out" replay=)"
-out=$(bank "ledger.balance|$stlpayer")
-check "pix.stl.customer.untouched.payer" "489950.00" "$(value "$out" available=)"
-out=$(bank "ledger.balance|$stlpayee")
-check "pix.stl.customer.untouched.payee" "500230.00" "$(value "$out" available=)"
-grep -aq "|D|             150.00|${stlrt}|BRL|STL" var/journal/postings.log && paygl=yes || paygl=no
-check "pix.stl.gl.payable.debit" "yes" "$paygl"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-OK||OP01|COR|SKL")
-check "pix.stl.recon.ok" "BALANCED" "$(value "$out" msg=)"
-check "pix.stl.recon.ok.matched" "000000002" "$(value "$out" matched=)"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKM")
-check "pix.stl.cycle.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.cycle.recon" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.obligation.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.obligation.matched" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.pos.list")
-check "pix.stl.position.count" "0000001" "$(value "$out" positions=)"
-check "pix.stl.position.settledpay" "150.00" "$(value "$out" settledpay=)"
-check "pix.stl.position.settledrcv" "50.00" "$(value "$out" settledrcv=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKN")
-check "pix.stl.finalize.replay" "Y" "$(value "$out" replay=)"
 
 cp "$CFG_BAK" etc/bank.cfg
 
@@ -2073,146 +853,6 @@ check "collections.autocreate.rc2" "00" "$(value "$out" rc=)"
 check "collections.autocreate.created2" "00000" "$(printf '%s' "$out" | grep -o 'CREATED=[0-9]*' | tail -1 | sed 's/CREATED=//')"
 out=$(bank "collections.case.list")
 check "collections.autocreate.list2" "00001" "$(value "$out" count=)"
-
-sed -i 's/business-date=.*/business-date=2026-10-02/' etc/bank.cfg
-reset
-bank "ledger.init" >/dev/null
-out=$(bank "pix.rt.create|12345678|KOF SELF|DEBITS|DPI|Y||OP01|COR|SRT1")
-check "pix.stl.rt.self" "ACTIVE" "$(value "$out" status=)"
-out=$(bank "pix.rt.create|87654321|BANCO OUTRO|DEBITS|DPI|N||OP01|COR|SRT2")
-stlrt=$(value "$out" id=)
-out=$(bank "customer.create|P|STL PAGADOR|CPF|123.456.789-09|19900101|OP01|SC1")
-out=$(bank "account.open|$(value "$out" id=)|DMND|BRL|500000|OP01|SC2|O1")
-stlpayer=$(value "$out" id=)
-out=$(bank "customer.create|P|STL RECEBEDOR|CPF|234.567.890-92|19900101|OP01|SC3")
-stlrecvc=$(value "$out" id=)
-out=$(bank "account.open|$stlrecvc|DMND|BRL|500000|OP01|SC4|O2")
-stlpayee=$(value "$out" id=)
-out=$(bank "pix.key.register|CPF|234.567.890-92|$stlpayee|$stlrecvc|OP01|COR|SK1")
-stlkey=$(value "$out" id=)
-out=$(bank "pix.key.seed|CPF|13579111140|$stlrt|FX000000001|FXC0000001|OUT CLIENTE|OP01|COR|SK2")
-check "pix.stl.seed" "00" "$(value "$out" rc=)"
-stlforeign=$(value "$out" keyid=)
-
-out=$(bank "pix.out.key|$stlkey|100.00|$stlpayer|||pix local|OP01|COR|SK3||Y")
-check "pix.stl.local.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|150.00|$stlpayer|||pix externo|OP01|COR|SK4||Y")
-stlout=$(value "$out" id=)
-check "pix.stl.out.posted" "POSTED" "$(value "$out" status=)"
-check "pix.stl.out.settle.pending" "PENDING" "$(value "$out" settle=)"
-out=$(bank "pix.in|50.00|$stlpayee|$stlrt|E2ESTL000000000000000000001|EXT-STL-1|PAGADOR EXTERNO|OP01|COR|SK5")
-stlin=$(value "$out" id=)
-check "pix.stl.in.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|70.00|$stlpayer|||a devolver|OP01|COR|SK6||Y")
-stldvl=$(value "$out" id=)
-out=$(bank "pix.devol|$stldvl|70.00|estorno integral|OP01|COR|SK7")
-check "pix.stl.devol.rc" "00" "$(value "$out" rc=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.status" "DEVOLVED" "$(value "$out" status=)"
-
-out=$(bank "pix.cycle.open|20261002|BRL|OP01|COR|SK8")
-check "pix.stl.cycle.open" "00" "$(value "$out" rc=)"
-check "pix.stl.cycle.status" "OPEN" "$(value "$out" status=)"
-cyc=$(value "$out" cycle=)
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.accrue.cycle" "$cyc" "$(value "$out" cycle=)"
-out=$(bank "pix.get|$stlout")
-check "pix.stl.out.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stlin")
-check "pix.stl.in.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.excluded" "NOT-APPLICABLE" "$(value "$out" settle=)"
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.replay" "00" "$(value "$out" rc=)"
-
-out=$(bank "pix.cycle.close|$cyc|OP01|COR|SKA")
-check "pix.stl.close" "CLOSED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.calc|$cyc|OP01|COR|SKB")
-check "pix.stl.calc" "CALCULATED" "$(value "$out" status=)"
-check "pix.stl.calc.txns" "0000003" "$(value "$out" txns=)"
-check "pix.stl.calc.grosspay" "150.00" "$(value "$out" grosspay=)"
-check "pix.stl.calc.grossrcv" "120.00" "$(value "$out" grossrcv=)"
-check "pix.stl.calc.net" "30.00" "$(value "$out" net=)"
-check "pix.stl.calc.side" "PAYABLE" "$(value "$out" side=)"
-check "pix.stl.calc.parties" "0000001" "$(value "$out" parties=)"
-
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.cycle.submit" "SUBMITTED" "$(value "$out" status=)"
-out=$(bank "pix.stl.list|$cyc")
-check "pix.stl.submit.count" "0000002" "$(value "$out" settlements=)"
-check "pix.stl.submit.status" "SUBMITTED" "$(grep -c 'status=SUBMITTED' <<<"$out" | tr -d ' ')"
-stl1=$(grep -F "side=PAYABLE" -B2 <<<"$out" | grep -F "settlement=" | head -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-stl2=$(bank "pix.stl.list|$cyc" | grep -F "settlement=" | tail -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.get.participant" "$stlrt" "$(value "$out" participant=)"
-check "pix.stl.get.extref" "SPIS-00000000001" "$(value "$out" extref=)"
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.submit.replay.attempts" "0001" "$(bank "pix.stl.get|$stl1" | grep -F "attempts=" | sed 's/^attempts=//;s/[[:space:]]*$//')"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1|valor divergente|140.00|OP01|COR|SKD")
-check "pix.stl.result.mismatch.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.result.mismatch.settled" "140.00" "$(value "$out" settledamt=)"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-BAD||OP01|COR|SKE")
-check "pix.stl.recon.bad.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.recon.bad.status" "EXCEPTIONS" "$(value "$out" msg=)"
-check "pix.stl.recon.bad.open" "000000002" "$(value "$out" openexc=)"
-out=$(bank "reconciliation.exceptions|REC-STL-BAD")
-case "$out" in
-    *AMT_MISMATCH*) stm=yes ;;
-    *) stm=no ;;
-esac
-check "pix.stl.recon.amount.mismatch.code" "yes" "$stm"
-case "$out" in
-    *STALE_SETTLE*) sts=yes ;;
-    *) sts=no ;;
-esac
-check "pix.stl.recon.stale.code" "yes" "$sts"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKF")
-check "pix.stl.recon.cycle.exc" "RECON-EXCEPTION" "$(value "$out" status=)"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1B|valor correto|150.00|OP01|COR|SKG")
-check "pix.stl.result.fixed" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.result.fixed.amount" "150.00" "$(value "$out" settledamt=)"
-out=$(bank "pix.stl.result|$stl2||SETTLED|SPIRES-2|ok|50.00|OP01|COR|SKH")
-check "pix.stl.result.in" "SETTLED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKI")
-check "pix.stl.finalize" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.finalize.post" "BALANCED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
-check "pix.stl.post.pay.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.post.pay.status" "POSTED" "$(value "$out" post=)"
-stl1jrnl=$(value "$out" journal=)
-case "$stl1jrnl" in
-    STL*) jok=yes ;;
-    *) jok=no ;;
-esac
-check "pix.stl.post.journal" "yes" "$jok"
-out=$(bank "pix.stl.post|$stl2|OP01|COR|SKK")
-check "pix.stl.post.rcv" "POSTED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
-check "pix.stl.post.replay" "Y" "$(value "$out" replay=)"
-out=$(bank "ledger.balance|$stlpayer")
-check "pix.stl.customer.untouched.payer" "489950.00" "$(value "$out" available=)"
-out=$(bank "ledger.balance|$stlpayee")
-check "pix.stl.customer.untouched.payee" "500230.00" "$(value "$out" available=)"
-grep -aq "|D|             150.00|${stlrt}|BRL|STL" var/journal/postings.log && paygl=yes || paygl=no
-check "pix.stl.gl.payable.debit" "yes" "$paygl"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-OK||OP01|COR|SKL")
-check "pix.stl.recon.ok" "BALANCED" "$(value "$out" msg=)"
-check "pix.stl.recon.ok.matched" "000000002" "$(value "$out" matched=)"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKM")
-check "pix.stl.cycle.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.cycle.recon" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.obligation.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.obligation.matched" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.pos.list")
-check "pix.stl.position.count" "0000001" "$(value "$out" positions=)"
-check "pix.stl.position.settledpay" "150.00" "$(value "$out" settledpay=)"
-check "pix.stl.position.settledrcv" "50.00" "$(value "$out" settledrcv=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKN")
-check "pix.stl.finalize.replay" "Y" "$(value "$out" replay=)"
 
 cp "$CFG_BAK" etc/bank.cfg
 
@@ -2238,146 +878,6 @@ check "collections.arrange.rewind.status" "PARTIALLY" "$(value "$out" status=)"
 out=$(bank "collections.promise.fulfill|M00000000009||OP01|AG9|AGR9")
 check "collections.promise.notfound" "23" "$(value "$out" rc=)"
 
-
-sed -i 's/business-date=.*/business-date=2026-10-02/' etc/bank.cfg
-reset
-bank "ledger.init" >/dev/null
-out=$(bank "pix.rt.create|12345678|KOF SELF|DEBITS|DPI|Y||OP01|COR|SRT1")
-check "pix.stl.rt.self" "ACTIVE" "$(value "$out" status=)"
-out=$(bank "pix.rt.create|87654321|BANCO OUTRO|DEBITS|DPI|N||OP01|COR|SRT2")
-stlrt=$(value "$out" id=)
-out=$(bank "customer.create|P|STL PAGADOR|CPF|123.456.789-09|19900101|OP01|SC1")
-out=$(bank "account.open|$(value "$out" id=)|DMND|BRL|500000|OP01|SC2|O1")
-stlpayer=$(value "$out" id=)
-out=$(bank "customer.create|P|STL RECEBEDOR|CPF|234.567.890-92|19900101|OP01|SC3")
-stlrecvc=$(value "$out" id=)
-out=$(bank "account.open|$stlrecvc|DMND|BRL|500000|OP01|SC4|O2")
-stlpayee=$(value "$out" id=)
-out=$(bank "pix.key.register|CPF|234.567.890-92|$stlpayee|$stlrecvc|OP01|COR|SK1")
-stlkey=$(value "$out" id=)
-out=$(bank "pix.key.seed|CPF|13579111140|$stlrt|FX000000001|FXC0000001|OUT CLIENTE|OP01|COR|SK2")
-check "pix.stl.seed" "00" "$(value "$out" rc=)"
-stlforeign=$(value "$out" keyid=)
-
-out=$(bank "pix.out.key|$stlkey|100.00|$stlpayer|||pix local|OP01|COR|SK3||Y")
-check "pix.stl.local.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|150.00|$stlpayer|||pix externo|OP01|COR|SK4||Y")
-stlout=$(value "$out" id=)
-check "pix.stl.out.posted" "POSTED" "$(value "$out" status=)"
-check "pix.stl.out.settle.pending" "PENDING" "$(value "$out" settle=)"
-out=$(bank "pix.in|50.00|$stlpayee|$stlrt|E2ESTL000000000000000000001|EXT-STL-1|PAGADOR EXTERNO|OP01|COR|SK5")
-stlin=$(value "$out" id=)
-check "pix.stl.in.posted" "POSTED" "$(value "$out" status=)"
-out=$(bank "pix.out.key|$stlforeign|70.00|$stlpayer|||a devolver|OP01|COR|SK6||Y")
-stldvl=$(value "$out" id=)
-out=$(bank "pix.devol|$stldvl|70.00|estorno integral|OP01|COR|SK7")
-check "pix.stl.devol.rc" "00" "$(value "$out" rc=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.status" "DEVOLVED" "$(value "$out" status=)"
-
-out=$(bank "pix.cycle.open|20261002|BRL|OP01|COR|SK8")
-check "pix.stl.cycle.open" "00" "$(value "$out" rc=)"
-check "pix.stl.cycle.status" "OPEN" "$(value "$out" status=)"
-cyc=$(value "$out" cycle=)
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.accrue.cycle" "$cyc" "$(value "$out" cycle=)"
-out=$(bank "pix.get|$stlout")
-check "pix.stl.out.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stlin")
-check "pix.stl.in.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.excluded" "NOT-APPLICABLE" "$(value "$out" settle=)"
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.replay" "00" "$(value "$out" rc=)"
-
-out=$(bank "pix.cycle.close|$cyc|OP01|COR|SKA")
-check "pix.stl.close" "CLOSED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.calc|$cyc|OP01|COR|SKB")
-check "pix.stl.calc" "CALCULATED" "$(value "$out" status=)"
-check "pix.stl.calc.txns" "0000003" "$(value "$out" txns=)"
-check "pix.stl.calc.grosspay" "150.00" "$(value "$out" grosspay=)"
-check "pix.stl.calc.grossrcv" "120.00" "$(value "$out" grossrcv=)"
-check "pix.stl.calc.net" "30.00" "$(value "$out" net=)"
-check "pix.stl.calc.side" "PAYABLE" "$(value "$out" side=)"
-check "pix.stl.calc.parties" "0000001" "$(value "$out" parties=)"
-
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.cycle.submit" "SUBMITTED" "$(value "$out" status=)"
-out=$(bank "pix.stl.list|$cyc")
-check "pix.stl.submit.count" "0000002" "$(value "$out" settlements=)"
-check "pix.stl.submit.status" "SUBMITTED" "$(grep -c 'status=SUBMITTED' <<<"$out" | tr -d ' ')"
-stl1=$(grep -F "side=PAYABLE" -B2 <<<"$out" | grep -F "settlement=" | head -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-stl2=$(bank "pix.stl.list|$cyc" | grep -F "settlement=" | tail -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.get.participant" "$stlrt" "$(value "$out" participant=)"
-check "pix.stl.get.extref" "SPIS-00000000001" "$(value "$out" extref=)"
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.submit.replay.attempts" "0001" "$(bank "pix.stl.get|$stl1" | grep -F "attempts=" | sed 's/^attempts=//;s/[[:space:]]*$//')"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1|valor divergente|140.00|OP01|COR|SKD")
-check "pix.stl.result.mismatch.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.result.mismatch.settled" "140.00" "$(value "$out" settledamt=)"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-BAD||OP01|COR|SKE")
-check "pix.stl.recon.bad.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.recon.bad.status" "EXCEPTIONS" "$(value "$out" msg=)"
-check "pix.stl.recon.bad.open" "000000002" "$(value "$out" openexc=)"
-out=$(bank "reconciliation.exceptions|REC-STL-BAD")
-case "$out" in
-    *AMT_MISMATCH*) stm=yes ;;
-    *) stm=no ;;
-esac
-check "pix.stl.recon.amount.mismatch.code" "yes" "$stm"
-case "$out" in
-    *STALE_SETTLE*) sts=yes ;;
-    *) sts=no ;;
-esac
-check "pix.stl.recon.stale.code" "yes" "$sts"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKF")
-check "pix.stl.recon.cycle.exc" "RECON-EXCEPTION" "$(value "$out" status=)"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1B|valor correto|150.00|OP01|COR|SKG")
-check "pix.stl.result.fixed" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.result.fixed.amount" "150.00" "$(value "$out" settledamt=)"
-out=$(bank "pix.stl.result|$stl2||SETTLED|SPIRES-2|ok|50.00|OP01|COR|SKH")
-check "pix.stl.result.in" "SETTLED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKI")
-check "pix.stl.finalize" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.finalize.post" "BALANCED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
-check "pix.stl.post.pay.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.post.pay.status" "POSTED" "$(value "$out" post=)"
-stl1jrnl=$(value "$out" journal=)
-case "$stl1jrnl" in
-    STL*) jok=yes ;;
-    *) jok=no ;;
-esac
-check "pix.stl.post.journal" "yes" "$jok"
-out=$(bank "pix.stl.post|$stl2|OP01|COR|SKK")
-check "pix.stl.post.rcv" "POSTED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
-check "pix.stl.post.replay" "Y" "$(value "$out" replay=)"
-out=$(bank "ledger.balance|$stlpayer")
-check "pix.stl.customer.untouched.payer" "489950.00" "$(value "$out" available=)"
-out=$(bank "ledger.balance|$stlpayee")
-check "pix.stl.customer.untouched.payee" "500230.00" "$(value "$out" available=)"
-grep -aq "|D|             150.00|${stlrt}|BRL|STL" var/journal/postings.log && paygl=yes || paygl=no
-check "pix.stl.gl.payable.debit" "yes" "$paygl"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-OK||OP01|COR|SKL")
-check "pix.stl.recon.ok" "BALANCED" "$(value "$out" msg=)"
-check "pix.stl.recon.ok.matched" "000000002" "$(value "$out" matched=)"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKM")
-check "pix.stl.cycle.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.cycle.recon" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.obligation.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.obligation.matched" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.pos.list")
-check "pix.stl.position.count" "0000001" "$(value "$out" positions=)"
-check "pix.stl.position.settledpay" "150.00" "$(value "$out" settledpay=)"
-check "pix.stl.position.settledrcv" "50.00" "$(value "$out" settledrcv=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKN")
-check "pix.stl.finalize.replay" "Y" "$(value "$out" replay=)"
 
 cp "$CFG_BAK" etc/bank.cfg
 
@@ -3100,141 +1600,737 @@ sed -i 's/business-date=.*/business-date=2026-10-02/' etc/bank.cfg
 reset
 bank "ledger.init" >/dev/null
 out=$(bank "pix.rt.create|12345678|KOF SELF|DEBITS|DPI|Y||OP01|COR|SRT1")
-check "pix.stl.rt.self" "ACTIVE" "$(value "$out" status=)"
+check "pix.stl.self.rt" "00" "$(value "$out" rc=)"
 out=$(bank "pix.rt.create|87654321|BANCO OUTRO|DEBITS|DPI|N||OP01|COR|SRT2")
 stlrt=$(value "$out" id=)
 out=$(bank "customer.create|P|STL PAGADOR|CPF|123.456.789-09|19900101|OP01|SC1")
-out=$(bank "account.open|$(value "$out" id=)|DMND|BRL|500000|OP01|SC2|O1")
+stlc1=$(value "$out" id=)
+out=$(bank "account.open|$stlc1|DMND|BRL|500000|OP01|SC2|O1")
 stlpayer=$(value "$out" id=)
 out=$(bank "customer.create|P|STL RECEBEDOR|CPF|234.567.890-92|19900101|OP01|SC3")
-stlrecvc=$(value "$out" id=)
-out=$(bank "account.open|$stlrecvc|DMND|BRL|500000|OP01|SC4|O2")
+stlc2=$(value "$out" id=)
+out=$(bank "account.open|$stlc2|DMND|BRL|500000|OP01|SC4|O2")
 stlpayee=$(value "$out" id=)
-out=$(bank "pix.key.register|CPF|234.567.890-92|$stlpayee|$stlrecvc|OP01|COR|SK1")
+out=$(bank "pix.key.register|CPF|234.567.890-92|$stlpayee|$stlc2|OP01|COR|SK1")
 stlkey=$(value "$out" id=)
 out=$(bank "pix.key.seed|CPF|13579111140|$stlrt|FX000000001|FXC0000001|OUT CLIENTE|OP01|COR|SK2")
-check "pix.stl.seed" "00" "$(value "$out" rc=)"
+check "pix.stl.key.seeded" "00" "$(value "$out" rc=)"
 stlforeign=$(value "$out" keyid=)
-
 out=$(bank "pix.out.key|$stlkey|100.00|$stlpayer|||pix local|OP01|COR|SK3||Y")
 check "pix.stl.local.posted" "POSTED" "$(value "$out" status=)"
+check "pix.stl.local.not.settleable" "PENDING" "$(value "$out" settle=)"
 out=$(bank "pix.out.key|$stlforeign|150.00|$stlpayer|||pix externo|OP01|COR|SK4||Y")
-stlout=$(value "$out" id=)
 check "pix.stl.out.posted" "POSTED" "$(value "$out" status=)"
-check "pix.stl.out.settle.pending" "PENDING" "$(value "$out" settle=)"
-out=$(bank "pix.in|50.00|$stlpayee|$stlrt|E2ESTL000000000000000000001|EXT-STL-1|PAGADOR EXTERNO|OP01|COR|SK5")
-stlin=$(value "$out" id=)
+check "pix.stl.out.pending" "PENDING" "$(value "$out" settle=)"
+check "pix.stl.out.payeepart" "$stlrt" "$(value "$out" payeepart=)"
+out=$(bank "pix.in|50.00|$stlpayee|$stlrt|E2ESETL0000000000000000001|EXT-STL-1|PAGADOR EXTERNO|OP01|COR|SK5")
 check "pix.stl.in.posted" "POSTED" "$(value "$out" status=)"
+stlin=$(value "$out" id=)
 out=$(bank "pix.out.key|$stlforeign|70.00|$stlpayer|||a devolver|OP01|COR|SK6||Y")
 stldvl=$(value "$out" id=)
 out=$(bank "pix.devol|$stldvl|70.00|estorno integral|OP01|COR|SK7")
 check "pix.stl.devol.rc" "00" "$(value "$out" rc=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.status" "DEVOLVED" "$(value "$out" status=)"
+out=$(bank "pix.get|$stlin")
+check "pix.stl.in.self.settle" "PENDING" "$(value "$out" settle=)"
 
-out=$(bank "pix.cycle.open|20261002|BRL|OP01|COR|SK8")
-check "pix.stl.cycle.open" "00" "$(value "$out" rc=)"
-check "pix.stl.cycle.status" "OPEN" "$(value "$out" status=)"
+out=$(bank "pix.cycle.open|20261002|BRL|||||OP01|COR|SO1")
+check "pix.stl.cycle.open.rc" "00" "$(value "$out" rc=)"
+check "pix.stl.cycle.open.status" "OPEN" "$(value "$out" status=)"
 cyc=$(value "$out" cycle=)
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
+check "pix.stl.cycle.id" "CYC20261002BRL123456" "$cyc"
+out=$(bank "pix.cycle.open|20261002|BRL|||||OP01|COR|SO2")
+check "pix.stl.cycle.replay" "Y" "$(value "$out" replay=)"
+out=$(bank "pix.cycle.accrue|20261002|BRL|||||OP01|COR|SA1")
 check "pix.stl.accrue.rc" "00" "$(value "$out" rc=)"
 check "pix.stl.accrue.cycle" "$cyc" "$(value "$out" cycle=)"
-out=$(bank "pix.get|$stlout")
-check "pix.stl.out.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
+check "pix.stl.accrue.status" "ACCUMULATING" "$(value "$out" status=)"
+check "pix.stl.accrue.grosspay" "150.00" "$(value "$out" grosspay=)"
+check "pix.stl.accrue.grossrcv" "120.00" "$(value "$out" grossrcv=)"
 out=$(bank "pix.get|$stlin")
 check "pix.stl.in.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
-out=$(bank "pix.get|$stldvl")
-check "pix.stl.devol.excluded" "NOT-APPLICABLE" "$(value "$out" settle=)"
-out=$(bank "pix.cycle.accrue|20261002|BRL||OP01|COR|SK9")
-check "pix.stl.accrue.replay" "00" "$(value "$out" rc=)"
-
-out=$(bank "pix.cycle.close|$cyc|OP01|COR|SKA")
+out=$(bank "pix.cycle.accrue|20261002|BRL|||||OP01|COR|SA1")
+check "pix.stl.accrue.idempotent" "22" "$(value "$out" rc=)"
+out=$(bank "pix.cycle.close|$cyc|||||OP01|COR|SC1")
 check "pix.stl.close" "CLOSED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.calc|$cyc|OP01|COR|SKB")
-check "pix.stl.calc" "CALCULATED" "$(value "$out" status=)"
+out=$(bank "pix.cycle.calc|$cyc|||||OP01|COR|SC2")
+check "pix.stl.calc.status" "CALCULATED" "$(value "$out" status=)"
 check "pix.stl.calc.txns" "0000003" "$(value "$out" txns=)"
+check "pix.stl.calc.obligations" "0000002" "$(value "$out" obligations=)"
+check "pix.stl.calc.parties" "0000001" "$(value "$out" parties=)"
 check "pix.stl.calc.grosspay" "150.00" "$(value "$out" grosspay=)"
 check "pix.stl.calc.grossrcv" "120.00" "$(value "$out" grossrcv=)"
 check "pix.stl.calc.net" "30.00" "$(value "$out" net=)"
 check "pix.stl.calc.side" "PAYABLE" "$(value "$out" side=)"
-check "pix.stl.calc.parties" "0000001" "$(value "$out" parties=)"
-
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.cycle.submit" "SUBMITTED" "$(value "$out" status=)"
+out=$(bank "pix.cycle.submit|$cyc||||||OP01|COR|SS1")
+check "pix.stl.submit.status" "SUBMITTED" "$(value "$out" status=)"
 out=$(bank "pix.stl.list|$cyc")
-check "pix.stl.submit.count" "0000002" "$(value "$out" settlements=)"
-check "pix.stl.submit.status" "SUBMITTED" "$(grep -c 'status=SUBMITTED' <<<"$out" | tr -d ' ')"
-stl1=$(grep -F "side=PAYABLE" -B2 <<<"$out" | grep -F "settlement=" | head -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-stl2=$(bank "pix.stl.list|$cyc" | grep -F "settlement=" | tail -1 | sed 's/^settlement=//;s/[[:space:]]*$//')
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.get.participant" "$stlrt" "$(value "$out" participant=)"
-check "pix.stl.get.extref" "SPIS-00000000001" "$(value "$out" extref=)"
-out=$(bank "pix.cycle.submit|$cyc||OP01|COR|SKC")
-check "pix.stl.submit.replay.attempts" "0001" "$(bank "pix.stl.get|$stl1" | grep -F "attempts=" | sed 's/^attempts=//;s/[[:space:]]*$//')"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1|valor divergente|140.00|OP01|COR|SKD")
-check "pix.stl.result.mismatch.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.result.mismatch.settled" "140.00" "$(value "$out" settledamt=)"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-BAD||OP01|COR|SKE")
-check "pix.stl.recon.bad.rc" "00" "$(value "$out" rc=)"
-check "pix.stl.recon.bad.status" "EXCEPTIONS" "$(value "$out" msg=)"
-check "pix.stl.recon.bad.open" "000000002" "$(value "$out" openexc=)"
-out=$(bank "reconciliation.exceptions|REC-STL-BAD")
+check "pix.stl.list.count" "0000002" "$(value "$out" settlements=)"
+check "pix.stl.list.submitted" "2" "$(grep -c "status=SUBMITTED" <<<"$out")"
+check "pix.stl.list.extref" "2" "$(grep -c "extref=SPIS-" <<<"$out")"
+out=$(bank "pix.stl.get|S00000000001")
+check "pix.stl.payable.side" "PAYABLE" "$(value "$out" side=)"
+check "pix.stl.payable.gross" "150.00" "$(value "$out" gross=)"
+check "pix.stl.payable.part" "$stlrt" "$(value "$out" participant=)"
+out=$(bank "pix.stl.get|S00000000002")
+check "pix.stl.receivable.side" "RECEIVABLE" "$(value "$out" side=)"
+check "pix.stl.receivable.net" "120.00" "$(value "$out" net=)"
+out=$(bank "pix.cycle.submit|$cyc||||||OP01|COR|SS1")
+check "pix.stl.submit.idempotent" "22" "$(value "$out" rc=)"
+out=$(bank "pix.stl.get|S00000000001")
+check "pix.stl.attempts.once" "0001" "$(value "$out" attempts=)"
+out=$(bank "ledger.balance|$stlpayer")
+stlpaybal0=$(value "$out" available=)
+out=$(bank "ledger.balance|$stlpayee")
+stlrecvbal0=$(value "$out" available=)
+out=$(bank "pix.stl.result|S00000000001||SETTLED|SPIRES-1|liquidado||OP01|COR|SR1")
+check "pix.stl.result.rc" "00" "$(value "$out" rc=)"
+check "pix.stl.result.status" "SETTLED" "$(value "$out" status=)"
+check "pix.stl.result.amount" "150.00" "$(value "$out" settledamt=)"
+check "pix.stl.result.ref" "SPIRES-1" "$(value "$out" resultref=)"
+out=$(bank "pix.cycle.finalize|$cyc|||||OP01|COR|SF1")
+check "pix.stl.finalize.incomplete" "21" "$(value "$out" rc=)"
 case "$out" in
-    *AMT_MISMATCH*) stm=yes ;;
-    *) stm=no ;;
+    *"CYCLE NOT READY"*) stlnr=yes ;;
+    *) stlnr=no ;;
 esac
-check "pix.stl.recon.amount.mismatch.code" "yes" "$stm"
-case "$out" in
-    *STALE_SETTLE*) sts=yes ;;
-    *) sts=no ;;
-esac
-check "pix.stl.recon.stale.code" "yes" "$sts"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKF")
-check "pix.stl.recon.cycle.exc" "RECON-EXCEPTION" "$(value "$out" status=)"
-
-out=$(bank "pix.stl.result|$stl1||SETTLED|SPIRES-1B|valor correto|150.00|OP01|COR|SKG")
-check "pix.stl.result.fixed" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.result.fixed.amount" "150.00" "$(value "$out" settledamt=)"
-out=$(bank "pix.stl.result|$stl2||SETTLED|SPIRES-2|ok|50.00|OP01|COR|SKH")
+check "pix.stl.finalize.incomplete.msg" "yes" "$stlnr"
+out=$(bank "pix.stl.result|S00000000002||SETTLED|SPIRES-2|liquidado||OP01|COR|SR2")
 check "pix.stl.result.in" "SETTLED" "$(value "$out" status=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKI")
-check "pix.stl.finalize" "SETTLED" "$(value "$out" status=)"
-check "pix.stl.finalize.post" "BALANCED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
+check "pix.stl.result.in.amount" "120.00" "$(value "$out" settledamt=)"
+out=$(bank "pix.cycle.finalize|$cyc|||||OP01|COR|SF1")
+check "pix.stl.finalize.status" "SETTLED" "$(value "$out" status=)"
+out=$(bank "pix.cycle.finalize|$cyc|||||OP01|COR|SF1")
+check "pix.stl.finalize.idempotent" "22" "$(value "$out" rc=)"
+out=$(bank "pix.stl.post|S00000000001||||OP01|COR|SP1")
 check "pix.stl.post.pay.rc" "00" "$(value "$out" rc=)"
 check "pix.stl.post.pay.status" "POSTED" "$(value "$out" post=)"
 stl1jrnl=$(value "$out" journal=)
 case "$stl1jrnl" in
-    STL*) jok=yes ;;
-    *) jok=no ;;
+    STL*) check "pix.stl.post.journal" "Y" "Y" ;;
+    *) check "pix.stl.post.journal" "Y" "N" ;;
 esac
-check "pix.stl.post.journal" "yes" "$jok"
-out=$(bank "pix.stl.post|$stl2|OP01|COR|SKK")
+out=$(bank "pix.stl.post|S00000000002||||OP01|COR|SP2")
 check "pix.stl.post.rcv" "POSTED" "$(value "$out" post=)"
-out=$(bank "pix.stl.post|$stl1|OP01|COR|SKJ")
+out=$(bank "pix.stl.post|S00000000001||||OP01|COR|SP1")
 check "pix.stl.post.replay" "Y" "$(value "$out" replay=)"
+check "pix.stl.post.replay.journal" "$stl1jrnl" "$(value "$out" journal=)"
 out=$(bank "ledger.balance|$stlpayer")
-check "pix.stl.customer.untouched.payer" "489950.00" "$(value "$out" available=)"
+check "pix.stl.customer.untouched.payer" "$stlpaybal0" "$(value "$out" available=)"
 out=$(bank "ledger.balance|$stlpayee")
-check "pix.stl.customer.untouched.payee" "500230.00" "$(value "$out" available=)"
-grep -aq "|D|             150.00|${stlrt}|BRL|STL" var/journal/postings.log && paygl=yes || paygl=no
-check "pix.stl.gl.payable.debit" "yes" "$paygl"
-out=$(bank "reconciliation.run|PIXSTL|REC-STL-OK||OP01|COR|SKL")
-check "pix.stl.recon.ok" "BALANCED" "$(value "$out" msg=)"
-check "pix.stl.recon.ok.matched" "000000002" "$(value "$out" matched=)"
-out=$(bank "pix.cycle.get|$cyc|OP01|COR|SKM")
+check "pix.stl.customer.untouched.payee" "$stlrecvbal0" "$(value "$out" available=)"
+glstl=$(grep -c "|STLS" var/journal/postings.log)
+check "pix.stl.gl.lines" "4" "$glstl"
+out=$(bank "pix.pos.rebuild|P00000000002|BRL|||||OP01|COR|SPR1")
+check "pix.stl.pos.rebuild.rc" "00" "$(value "$out" rc=)"
+out=$(bank "pix.pos.list")
+check "pix.stl.pos.count" "0000001" "$(value "$out" positions=)"
+check "pix.stl.pos.part" "$stlrt" "$(value "$out" participant=)"
+check "pix.stl.pos.settledpay" "150.00" "$(value "$out" settledpay=)"
+check "pix.stl.pos.settledrcv" "120.00" "$(value "$out" settledrcv=)"
+out=$(bank "reconciliation.run|PIXSTL|REC-STL-1||OP01|COR")
+check "pix.stl.recon.balanced" "BALANCED" "$(value "$out" msg=)"
+check "pix.stl.recon.matched" "000000002" "$(value "$out" matched=)"
+check "pix.stl.recon.unmatched" "000000000" "$(value "$out" unmatched=)"
+check "pix.stl.recon.openexc" "000000000" "$(value "$out" openexc=)"
+out=$(bank "pix.cycle.get|$cyc|||||OP01|COR|SG1")
 check "pix.stl.cycle.reconciled" "RECONCILED" "$(value "$out" status=)"
 check "pix.stl.cycle.recon" "MATCHED" "$(value "$out" recon=)"
-out=$(bank "pix.stl.get|$stl1")
-check "pix.stl.obligation.reconciled" "RECONCILED" "$(value "$out" status=)"
-check "pix.stl.obligation.matched" "MATCHED" "$(value "$out" recon=)"
+out=$(bank "pix.stl.get|S00000000001")
+check "pix.stl.obligation.recon" "RECONCILED" "$(value "$out" status=)"
+check "pix.stl.obligation.match" "MATCHED" "$(value "$out" recon=)"
+out=$(bank "reconciliation.exceptions|REC-STL-1")
+check "pix.stl.recon.no.exc" "000000000" "$(value "$out" exceptions=)"
+out=$(bank "ledger.trial")
+check "pix.stl.trial.balanced" "BALANCED" "$(value "$out" msg=)"
+
+sed -i 's/business-date=.*/business-date=2026-10-03/' etc/bank.cfg
+out=$(bank "pix.out.key|$stlforeign|200.00|$stlpayer|||pix ciclo b|OP01|COR|SK8||Y")
+stlbout=$(value "$out" id=)
+out=$(bank "ledger.balance|$stlpayer")
+stlbpay0=$(value "$out" available=)
+out=$(bank "pix.in|60.00|$stlpayee|$stlrt|E2ESETL0000000000000000002|EXT-STL-2|PAGADOR B|OP01|COR|SK9")
+check "pix.stl.b.in.posted" "POSTED" "$(value "$out" status=)"
+out=$(bank "pix.cycle.accrue|20261003|BRL|||||OP01|COR|SA2")
+check "pix.stl.b.accrue.rc" "00" "$(value "$out" rc=)"
+cycb=$(value "$out" cycle=)
+check "pix.stl.b.cycle" "CYC20261003BRL123456" "$cycb"
+check "pix.stl.b.grosspay" "200.00" "$(value "$out" grosspay=)"
+check "pix.stl.b.grossrcv" "60.00" "$(value "$out" grossrcv=)"
+out=$(bank "pix.get|$stlbout")
+check "pix.stl.b.out.accumulated" "ACCUMULATED" "$(value "$out" settle=)"
+out=$(bank "pix.stl.list|$cycb")
+stlbpay=$(awk '/^settlement=/{id=substr($0,12)}
+    /^side=PAYABLE/{print id; exit}' <<<"$out")
+stlbcv=$(awk '/^settlement=/{id=substr($0,12)}
+    /^side=RECEIVABLE/{print id; exit}' <<<"$out")
+out=$(bank "pix.stl.adjust|$stlbpay|10.00|tarifa de liquidez||||OP01|COR|SAJ1")
+check "pix.stl.adjust.rc" "00" "$(value "$out" rc=)"
+check "pix.stl.adjust.amount" "10.00" "$(value "$out" adjust=)"
+check "pix.stl.adjust.net" "190.00" "$(value "$out" net=)"
+out=$(bank "pix.stl.adjust|$stlbpay|10.00|duplicado||||OP01|COR|SAJ1")
+check "pix.stl.adjust.idempotent" "22" "$(value "$out" rc=)"
+out=$(bank "pix.stl.get|$stlbpay")
+check "pix.stl.adjust.replay.amount" "10.00" "$(value "$out" adjust=)"
+out=$(bank "pix.cycle.close|$cycb|||||OP01|COR|SC3")
+check "pix.stl.b.close" "CLOSED" "$(value "$out" status=)"
+out=$(bank "pix.cycle.calc|$cycb|||||OP01|COR|SC4")
+check "pix.stl.b.calc.status" "CALCULATED" "$(value "$out" status=)"
+check "pix.stl.b.calc.net" "130.00" "$(value "$out" net=)"
+check "pix.stl.b.calc.grosspay" "190.00" "$(value "$out" grosspay=)"
+check "pix.stl.b.calc.obligations" "0000002" "$(value "$out" obligations=)"
+out=$(bank "pix.cycle.submit|$cycb||||||OP01|COR|SS2")
+check "pix.stl.b.submit" "SUBMITTED" "$(value "$out" status=)"
+out=$(bank "pix.stl.result|$stlbpay||SETTLED|SPIRES-3|valor menor|180.00|OP01|COR|SR3")
+check "pix.stl.b.result.amount" "180.00" "$(value "$out" settledamt=)"
+out=$(bank "reconciliation.run|PIXSTL|REC-STL-2||OP01|COR")
+check "pix.stl.b.recon.exc" "EXCEPTIONS" "$(value "$out" msg=)"
+check "pix.stl.b.recon.open" "000000002" "$(value "$out" openexc=)"
+out=$(bank "reconciliation.exceptions|REC-STL-2")
+check "pix.stl.b.exc.count" "000000002" "$(value "$out" exceptions=)"
+case "$out" in
+    *AMT_MISMATCH*) stlamt=yes ;;
+    *) stlamt=no ;;
+esac
+check "pix.stl.b.exc.amount.code" "yes" "$stlamt"
+case "$out" in
+    *STALE_SETTLE*) stlstale=yes ;;
+    *) stlstale=no ;;
+esac
+check "pix.stl.b.exc.stale.code" "yes" "$stlstale"
+out=$(bank "pix.cycle.get|$cycb|||||OP01|COR|SG2")
+check "pix.stl.b.cycle.exc" "RECON-EXCEPTION" "$(value "$out" status=)"
+check "pix.stl.b.cycle.recon" "EXCEPTION" "$(value "$out" recon=)"
+out=$(bank "pix.stl.get|$stlbpay")
+check "pix.stl.b.obligation.recon" "EXCEPTION" "$(value "$out" recon=)"
+out=$(bank "pix.cycle.finalize|$cycb|||||OP01|COR|SF2")
+check "pix.stl.b.finalize.blocked" "21" "$(value "$out" rc=)"
+out=$(bank "pix.stl.get|$stlbcv")
+check "pix.stl.b.stale.status" "SUBMITTED" "$(value "$out" status=)"
+out=$(bank "ledger.balance|$stlpayer")
+check "pix.stl.b.balance.unchanged" "$stlbpay0" "$(value "$out" available=)"
+out=$(bank "reconciliation.run|PIXSTL|REC-STL-3||OP01|COR")
+check "pix.stl.b.recon.repeat" "EXCEPTIONS" "$(value "$out" msg=)"
+
+sed -i 's/business-date=.*/business-date=2026-10-04/' etc/bank.cfg
+out=$(bank "pix.cycle.open|20261004|BRL|||||OP01|COR|SO3")
+check "pix.stl.eod.cycle" "CYC20261004BRL123456" "$(value "$out" cycle=)"
+cycd=$(value "$out" cycle=)
+out=$(bank "pix.cycle.accrue|20261004|BRL|||||OP01|COR|SA3")
+check "pix.stl.eod.empty" "00" "$(value "$out" rc=)"
+out=$(bank "pix.cycle.get|$cycd|||||OP01|COR|SG3")
+check "pix.stl.eod.empty.status" "OPEN" "$(value "$out" status=)"
+out=$(bank "pix.out.key|$stlforeign|90.00|$stlpayer|||pix eod|OP01|COR|SEA||Y")
+check "pix.stl.eod.out.posted" "POSTED" "$(value "$out" status=)"
+out=$(bank "pix.in|30.00|$stlpayee|$stlrt|E2ESETL0000000000000000003|EXT-STL-3|PAGADOR C|OP01|COR|SEB")
+check "pix.stl.eod.in.posted" "POSTED" "$(value "$out" status=)"
+out=$(bank "ledger.balance|$stlpayer")
+eodpay0=$(value "$out" available=)
+out=$(bank "batch.eod")
+check "pix.stl.eod.batch.rc" "00" "$(value "$out" rc=)"
+out=$(bank "pix.cycle.get|$cycd|||||OP01|COR|SG4")
+check "pix.stl.eod.finalized" "RECONCILED" "$(value "$out" status=)"
+check "pix.stl.eod.recon" "MATCHED" "$(value "$out" recon=)"
+out=$(bank "pix.stl.list|$cycd")
+check "pix.stl.eod.obligations" "0000002" "$(value "$out" settlements=)"
+check "pix.stl.eod.reconciled" "2" "$(grep -c "status=RECONCILED" <<<"$out")"
+check "pix.stl.eod.posted" "2" "$(grep -c "post=POSTED" <<<"$out")"
+outeod=$(bank "pix.stl.list|$cycd")
+stleodpay=$(awk '/^settlement=/{id=substr($0,12)}
+    /^side=PAYABLE/{print id; exit}' <<<"$outeod")
+out=$(bank "pix.stl.get|$stleodpay")
+check "pix.stl.eod.journal" "Y" "$(test -n "$(value "$out" journal=)" && echo Y || echo N)"
+out=$(bank "ledger.balance|$stlpayer")
+check "pix.stl.eod.customer.untouched" "$eodpay0" "$(value "$out" available=)"
+out=$(bank "ledger.trial")
+check "pix.stl.eod.trial" "BALANCED" "$(value "$out" msg=)"
+out=$(bank "batch.eod")
+check "pix.stl.eod.rerun.rc" "00" "$(value "$out" rc=)"
+glstl2=$(grep -c "|STLS" var/journal/postings.log)
+check "pix.stl.eod.rerun.no.double" "8" "$glstl2"
+out=$(bank "ledger.trial")
+check "pix.stl.eod.rerun.trial" "BALANCED" "$(value "$out" msg=)"
 out=$(bank "pix.pos.list")
-check "pix.stl.position.count" "0000001" "$(value "$out" positions=)"
-check "pix.stl.position.settledpay" "150.00" "$(value "$out" settledpay=)"
-check "pix.stl.position.settledrcv" "50.00" "$(value "$out" settledrcv=)"
-out=$(bank "pix.cycle.finalize|$cyc|OP01|COR|SKN")
-check "pix.stl.finalize.replay" "Y" "$(value "$out" replay=)"
+check "pix.stl.pos.settledpay.total" "420.00" "$(value "$out" settledpay=)"
+check "pix.stl.pos.settledrcv.total" "150.00" "$(value "$out" settledrcv=)"
+check "pix.stl.pos.pending.total" "0000001" "$(value "$out" pending=)"
+check "pix.stl.pos.settledrcv.eod" "150.00" "$(value "$out" settledrcv=)"
+
+# ---------- pix MED (Mecanismo Especial de Devolucao) domain ----------
+sed -i 's/business-date=.*/business-date=2026-10-02/' etc/bank.cfg
+reset
+bank "ledger.init" >/dev/null
+out=$(bank "pix.rt.create|12345678|KOF MED SELF|DEBITS|DPI|Y||OP01|COR|MRT1")
+check "pix.med.self.rt" "00" "$(value "$out" rc=)"
+out=$(bank "pix.rt.create|87654321|BANCO OUTRO MED|DEBITS|DPI|N||OP01|COR|MRT2")
+med_foreign=$(value "$out" id=)
+
+MEDN=0
+med_case() {
+    MEDN=$((MEDN + 1))
+    local cpayer cpayee key
+    cpayer=$(printf '1%010d' "$MEDN")
+    cpayee=$(printf '2%010d' "$MEDN")
+    out=$(bank "customer.create|P|MEDP$MEDN|CPF|$cpayer|19900101|OP01|M${MEDN}p")
+    MED_PAYER_CUST=$(value "$out" id=)
+    out=$(bank "account.open|$MED_PAYER_CUST|DMND|BRL|500000|OP01|M${MEDN}pa|MQ${MEDN}a")
+    MED_PAYER=$(value "$out" id=)
+    out=$(bank "customer.create|P|MEDR$MEDN|CPF|$cpayee|19900101|OP01|M${MEDN}r")
+    MED_PAYEE_CUST=$(value "$out" id=)
+    out=$(bank "account.open|$MED_PAYEE_CUST|DMND|BRL|500000|OP01|M${MEDN}ra|MQ${MEDN}b")
+    MED_PAYEE=$(value "$out" id=)
+    out=$(bank "pix.key.register|EMAIL|medpayee${MEDN}@example.com|$MED_PAYEE|$MED_PAYEE_CUST|OP01|COR|M${MEDN}k")
+    key=$(value "$out" id=)
+    out=$(bank "pix.out.key|$key|1000.00|$MED_PAYER|||pix fraudado|OP01|COR|M${MEDN}x||Y")
+    MED_PIX=$(value "$out" id=)
+    MED_PIX_STATUS=$(value "$out" status=)
+}
+
+# --- scenario A: full lifecycle, funds reserved then devoluted exactly once ---
+med_case
+check "pix.med.A.posted" "POSTED" "$MED_PIX_STATUS"
+out=$(bank "pix.med.open|$MED_PIX|1000.00|BRL|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MA1|MRQ1")
+medA=$(value "$out" medcase=); medAfraud=$(value "$out" fraud=)
+check "pix.med.A.open.rc" "00" "$(value "$out" rc=)"
+check "pix.med.A.open.status" "OPEN" "$(value "$out" status=)"
+check "pix.med.A.open.fraud" "Y" "$medAfraud"
+check "pix.med.A.open.origamount" "1000.00" "$(value "$out" origamount=)"
+out=$(bank "pix.get|$MED_PIX")
+check "pix.med.A.link" "$medA" "$(value "$out" medcase=)"
+check "pix.med.A.orig.immutable" "1000.00" "$(value "$out" amount=)"
+out=$(bank "pix.med.validate|$medA|OP01|MA2")
+check "pix.med.A.validate.rc" "00" "$(value "$out" rc=)"
+check "pix.med.A.validate.status" "BLOCK-PEND" "$(value "$out" status=)"
+check "pix.med.A.validate.eligible" "1000.00" "$(value "$out" eligible=)"
+out=$(bank "pix.med.block|$medA|OP01|MA3")
+check "pix.med.A.block.rc" "00" "$(value "$out" rc=)"
+check "pix.med.A.block.status" "BLOCKED" "$(value "$out" status=)"
+check "pix.med.A.block.amount" "1000.00" "$(value "$out" blocked=)"
+medAhold=$(value "$out" hold=)
+check "pix.med.A.block.holdid" "Y" "$(test -n "$medAhold" && echo Y || echo N)"
+out=$(bank "ledger.balance|$MED_PAYEE")
+check "pix.med.A.block.avail" "500000.00" "$(value "$out" available=)"
+check "pix.med.A.block.ledger" "501000.00" "$(value "$out" ledger=)"
+out=$(bank "pix.med.block|$medA|OP01|MA3b")
+check "pix.med.A.block.replay" "00" "$(value "$out" rc=)"
+out=$(bank "pix.med.decide|$medA|APPROVE||fundamentado|OP01|MA4")
+check "pix.med.A.decide.rc" "00" "$(value "$out" rc=)"
+check "pix.med.A.decide.status" "APPROVED" "$(value "$out" status=)"
+check "pix.med.A.decide.amount" "1000.00" "$(value "$out" decamount=)"
+out=$(bank "pix.med.execute|$medA||OP01|MA5")
+medAdevol=$(value "$out" devol=)
+check "pix.med.A.exec.rc" "00" "$(value "$out" rc=)"
+check "pix.med.A.exec.status" "DEVOLVED" "$(value "$out" status=)"
+check "pix.med.A.exec.returned" "1000.00" "$(value "$out" returned=)"
+check "pix.med.A.exec.devol" "Y" "$(test -n "$medAdevol" && echo Y || echo N)"
+out=$(bank "pix.med.execute|$medA||OP01|MA6")
+check "pix.med.A.exec.replay" "DEVOLVED" "$(value "$out" status=)"
+check "pix.med.A.exec.replayflag" "Y" "$(value "$out" replay=)"
+out=$(bank "ledger.balance|$MED_PAYEE")
+check "pix.med.A.final.payee.ledger" "500000.00" "$(value "$out" ledger=)"
+check "pix.med.A.final.payee.blocked" "0.00" "$(value "$out" blocked=)"
+out=$(bank "ledger.balance|$MED_PAYER")
+check "pix.med.A.final.payer.avail" "500000.00" "$(value "$out" available=)"
+out=$(bank "pix.get|$MED_PIX")
+check "pix.med.A.orig.dev" "FULL" "$(value "$out" dev=)"
+check "pix.med.A.orig.status" "DEVOLVED" "$(value "$out" status=)"
+check "pix.med.A.orig.devol" "$medAdevol" "$(value "$out" devol=)"
+out=$(bank "pix.get|$medAdevol")
+check "pix.med.A.devol.amount" "1000.00" "$(value "$out" amount=)"
+out=$(bank "pix.med.close|$medA|OP01|MA7")
+check "pix.med.A.close.rc" "00" "$(value "$out" rc=)"
+check "pix.med.A.close.status" "CLOSED" "$(value "$out" status=)"
+out=$(bank "ledger.trial")
+check "pix.med.A.trial" "BALANCED" "$(value "$out" msg=)"
+
+# --- scenario B: rejected after block -> hold released, NO financial effect ---
+med_case
+out=$(bank "pix.med.open|$MED_PIX|1000.00|BRL|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MB1|MRQ2")
+medB=$(value "$out" medcase=)
+bank "pix.med.validate|$medB|OP01|MB2" >/dev/null
+bank "pix.med.block|$medB|OP01|MB3" >/dev/null
+out=$(bank "ledger.balance|$MED_PAYEE")
+check "pix.med.B.blocked.avail" "500000.00" "$(value "$out" available=)"
+out=$(bank "pix.med.decide|$medB|REJECT||improcedente|OP01|MB4")
+check "pix.med.B.reject.rc" "00" "$(value "$out" rc=)"
+check "pix.med.B.reject.status" "REJECTED" "$(value "$out" status=)"
+out=$(bank "pix.med.release|$medB|OP01|MB5")
+check "pix.med.B.release.rc" "00" "$(value "$out" rc=)"
+out=$(bank "ledger.balance|$MED_PAYEE")
+check "pix.med.B.released.blocked" "0.00" "$(value "$out" blocked=)"
+check "pix.med.B.released.avail" "501000.00" "$(value "$out" available=)"
+out=$(bank "pix.med.execute|$medB||OP01|MB6")
+check "pix.med.B.exec.after.reject" "20" "$(value "$out" rc=)"
+check "pix.med.B.no.devol" "NONE" "$(value "$(bank "pix.get|$MED_PIX")" dev=)"
+out=$(bank "ledger.trial")
+check "pix.med.B.trial" "BALANCED" "$(value "$out" msg=)"
+
+# --- scenario C: ineligible (no fraud indication) ---
+med_case
+out=$(bank "pix.med.open|$MED_PIX|1000.00|BRL|$MED_PAYEE_CUST|PAYEE|DUVIDA|N|OP01|MC1|MRQ3")
+medC=$(value "$out" medcase=)
+out=$(bank "pix.med.validate|$medC|OP01|MC2")
+check "pix.med.C.inelig.rc" "00" "$(value "$out" rc=)"
+check "pix.med.C.inelig.status" "INELIGIBLE" "$(value "$out" status=)"
+out=$(bank "pix.med.block|$medC|OP01|MC3")
+check "pix.med.C.block.blocked" "20" "$(value "$out" rc=)"
+
+# --- scenario D: partial approval + partial devolution ---
+med_case
+out=$(bank "pix.med.open|$MED_PIX|1000.00|BRL|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MD1|MRQ4")
+medD=$(value "$out" medcase=)
+bank "pix.med.validate|$medD|OP01|MD2" >/dev/null
+bank "pix.med.block|$medD|OP01|MD3" >/dev/null
+out=$(bank "pix.med.decide|$medD|PARTIAL|400.00|parcial|OP01|MD4")
+check "pix.med.D.part.decide" "00" "$(value "$out" rc=)"
+check "pix.med.D.part.status" "PART-APPROV" "$(value "$out" status=)"
+check "pix.med.D.part.amount" "400.00" "$(value "$out" decamount=)"
+out=$(bank "pix.med.execute|$medD||OP01|MD5")
+medDdevol=$(value "$out" devol=)
+check "pix.med.D.part.exec.rc" "00" "$(value "$out" rc=)"
+check "pix.med.D.part.exec.status" "DEVOLVED" "$(value "$out" status=)"
+check "pix.med.D.part.exec.returned" "400.00" "$(value "$out" returned=)"
+check "pix.med.D.part.remain" "600.00" "$(value "$out" remain=)"
+out=$(bank "pix.get|$MED_PIX")
+check "pix.med.D.orig.dev" "PARTIAL" "$(value "$out" dev=)"
+out=$(bank "pix.med.close|$medD|OP01|MD6")
+check "pix.med.D.close.status" "CLOSED" "$(value "$out" status=)"
+out=$(bank "ledger.trial")
+check "pix.med.D.trial" "BALANCED" "$(value "$out" msg=)"
+
+# --- scenario E: partial reservation when receiver has insufficient funds ---
+MEDN=$((MEDN + 1))
+eR=$(printf '2%010d' "$MEDN"); eT=$(printf '3%010d' "$MEDN")
+out=$(bank "customer.create|P|MEDR$MEDN|CPF|$eR|19900101|OP01|ME${MEDN}r"); erc=$(value "$out" id=)
+out=$(bank "account.open|$erc|DMND|BRL|0|OP01|ME${MEDN}ra|ME${MEDN}qa"); epayee=$(value "$out" id=)
+out=$(bank "customer.create|P|MEDT$MEDN|CPF|$eT|19900101|OP01|ME${MEDN}t"); etc=$(value "$out" id=)
+out=$(bank "account.open|$etc|DMND|BRL|500000|OP01|ME${MEDN}ta|ME${MEDN}qb"); etarget=$(value "$out" id=)
+out=$(bank "pix.key.register|EMAIL|medtgt${MEDN}@example.com|$etarget|$etc|OP01|COR|ME${MEDN}k2"); tkey=$(value "$out" id=)
+out=$(bank "pix.in|1000.00|$epayee|$med_foreign|E2EMEDL0000000000000000001|EXT-MED-E|PAG EXT|OP01|COR|ME${MEDN}in"); epix=$(value "$out" id=)
+check "pix.med.E.in.posted" "POSTED" "$(value "$out" status=)"
+out=$(bank "ledger.balance|$epayee"); check "pix.med.E.in.avail" "1000.00" "$(value "$out" available=)"
+out=$(bank "pix.out.key|$tkey|700.00|$epayee|||saque|OP01|COR|ME${MEDN}ot||Y")
+check "pix.med.E.out.posted" "POSTED" "$(value "$out" status=)"
+out=$(bank "ledger.balance|$epayee"); check "pix.med.E.avail.after" "300.00" "$(value "$out" available=)"
+out=$(bank "pix.med.open|$epix|1000.00|BRL|$erc|PAYEE|FRAUDE|Y|OP01|ME1|MRQ5"); medE=$(value "$out" medcase=)
+bank "pix.med.validate|$medE|OP01|ME2" >/dev/null
+out=$(bank "pix.med.block|$medE|OP01|ME3")
+check "pix.med.E.block.rc" "00" "$(value "$out" rc=)"
+check "pix.med.E.block.status" "BLOCKED" "$(value "$out" status=)"
+check "pix.med.E.block.eligible" "300.00" "$(value "$out" eligible=)"
+check "pix.med.E.block.blocked" "300.00" "$(value "$out" blocked=)"
+out=$(bank "pix.med.decide|$medE|APPROVE||fund|OP01|ME4")
+check "pix.med.E.decide.amount" "300.00" "$(value "$out" decamount=)"
+out=$(bank "pix.med.execute|$medE||OP01|ME5"); medEdevol=$(value "$out" devol=)
+check "pix.med.E.exec.rc" "00" "$(value "$out" rc=)"
+check "pix.med.E.exec.status" "DEVOLVED" "$(value "$out" status=)"
+check "pix.med.E.exec.returned" "300.00" "$(value "$out" returned=)"
+out=$(bank "pix.get|$epix"); check "pix.med.E.orig.dev" "PARTIAL" "$(value "$out" dev=)"
+out=$(bank "pix.get|$medEdevol"); check "pix.med.E.devol.amount" "300.00" "$(value "$out" amount=)"
+out=$(bank "ledger.trial"); check "pix.med.E.trial" "BALANCED" "$(value "$out" msg=)"
+
+# --- scenario F: timeout -> unknown -> recovery via existing devol id (no duplicate) ---
+med_case
+out=$(bank "pix.med.open|$MED_PIX|1000.00|BRL|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MF1|MRQ6")
+medF=$(value "$out" medcase=)
+bank "pix.med.validate|$medF|OP01|MF2" >/dev/null
+bank "pix.med.block|$medF|OP01|MF3" >/dev/null
+bank "pix.med.decide|$medF|APPROVE||fund|OP01|MF4" >/dev/null
+out=$(bank "pix.med.execute|$medF|TIMEOUT|OP01|MF5")
+medFdevol=$(value "$out" devol=)
+check "pix.med.F.timeout.rc" "24" "$(value "$out" rc=)"
+check "pix.med.F.timeout.status" "DEVOLV-UNK" "$(value "$out" status=)"
+check "pix.med.F.timeout.devol" "Y" "$(test -n "$medFdevol" && echo Y || echo N)"
+out=$(bank "pix.get|$MED_PIX")
+check "pix.med.F.orig.still.posted" "POSTED" "$(value "$out" status=)"
+out=$(bank "pix.med.execute|$medF||OP01|MF6")
+medFdevol2=$(value "$out" devol=)
+check "pix.med.F.recover.rc" "00" "$(value "$out" rc=)"
+check "pix.med.F.recover.status" "DEVOLVED" "$(value "$out" status=)"
+check "pix.med.F.recover.devol" "1000.00" "$(value "$out" returned=)"
+check "pix.med.F.recover.sameid" "Y" "$(test "$medFdevol" = "$medFdevol2" && echo Y || echo N)"
+out=$(bank "pix.med.execute|$medF||OP01|MF7")
+check "pix.med.F.recover.idempotent" "DEVOLVED" "$(value "$out" status=)"
+out=$(bank "ledger.balance|$MED_PAYEE")
+check "pix.med.F.final.payee.ledger" "500000.00" "$(value "$out" ledger=)"
+check "pix.med.F.final.payee.blocked" "0.00" "$(value "$out" blocked=)"
+out=$(bank "pix.get|$MED_PIX")
+check "pix.med.F.orig.dev" "FULL" "$(value "$out" dev=)"
+out=$(bank "ledger.trial")
+check "pix.med.F.trial" "BALANCED" "$(value "$out" msg=)"
+
+# --- scenario G: invalid input / bad transitions ---
+med_case
+out=$(bank "pix.med.open|X00000000999|1000.00|BRL|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MG1|MRQ7")
+check "pix.med.G.unknownpix" "20" "$(value "$out" rc=)"
+out=$(bank "pix.med.open|$MED_PIX|2000.00|BRL|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MG2|MRQ8")
+check "pix.med.G.overclaim" "20" "$(value "$out" rc=)"
+out=$(bank "pix.med.open|$MED_PIX|1000.00|USD|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MG3|MRQ9")
+check "pix.med.G.badcur" "20" "$(value "$out" rc=)"
+out=$(bank "pix.med.open|$MED_PIX|1000.00|BRL|$MED_PAYEE_CUST|PAYEE||Y|OP01|MG4|MRQ10")
+check "pix.med.G.badreason" "20" "$(value "$out" rc=)"
+out=$(bank "pix.med.open|$MED_PIX|1000.00|BRL|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MG5|MRQ11")
+medG=$(value "$out" medcase=)
+check "pix.med.G.open.rc" "00" "$(value "$out" rc=)"
+out=$(bank "pix.med.open|$MED_PIX|1000.00|BRL|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MG6|MRQ12")
+check "pix.med.G.dupconflict" "22" "$(value "$out" rc=)"
+out=$(bank "pix.med.execute|$medG||OP01|MG7")
+check "pix.med.G.exec.tooearly" "20" "$(value "$out" rc=)"
+out=$(bank "pix.med.validate|$medG|OP01|MG8")
+check "pix.med.G.validate.rc" "00" "$(value "$out" rc=)"
+out=$(bank "pix.med.decide|$medG|APPROVE||fund|OP01|MG9")
+check "pix.med.G.decide.preblock" "20" "$(value "$out" rc=)"
+out=$(bank "pix.med.validate|$medG|OP01|MGA")
+check "pix.med.G.validate.revalidate" "20" "$(value "$out" rc=)"
+out=$(bank "pix.med.close|$medG|OP01|MGB")
+check "pix.med.G.close.approved" "20" "$(value "$out" rc=)"
+
+# --- scenario H: request-id idempotent replay returns same case ---
+out=$(bank "pix.med.open|$MED_PIX|1000.00|BRL|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MHC|MRQ11")
+check "pix.med.H.replay.case" "$medG" "$(value "$out" medcase=)"
+check "pix.med.H.replay.flag" "Y" "$(value "$out" replay=)"
+
+# --- scenario I: expiry releases hold; window guard ---
+med_case
+out=$(bank "pix.med.open|$MED_PIX|1000.00|BRL|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MI1|MRQ13")
+medI=$(value "$out" medcase=)
+check "pix.med.I.deadline" "20261013" "$(value "$out" deadline=)"
+bank "pix.med.validate|$medI|OP01|MI2" >/dev/null
+bank "pix.med.block|$medI|OP01|MI3" >/dev/null
+out=$(bank "pix.med.expire|$medI|OP01|MI4")
+check "pix.med.I.notexpired.rc" "00" "$(value "$out" rc=)"
+check "pix.med.I.notexpired.status" "BLOCKED" "$(value "$out" status=)"
+sed -i 's/business-date=.*/business-date=2026-10-14/' etc/bank.cfg
+out=$(bank "pix.med.expire|$medI|OP01|MI5")
+check "pix.med.I.expired" "EXPIRED" "$(value "$out" status=)"
+out=$(bank "ledger.balance|$MED_PAYEE")
+check "pix.med.I.expired.blocked" "0.00" "$(value "$out" blocked=)"
+check "pix.med.I.expired.avail" "501000.00" "$(value "$out" available=)"
+sed -i 's/business-date=.*/business-date=2026-10-02/' etc/bank.cfg
+out=$(bank "ledger.trial")
+check "pix.med.I.trial" "BALANCED" "$(value "$out" msg=)"
+
+# --- scenario J: list / get / recon / restart safety (data is on-disk) ---
+out=$(bank "pix.med.get|$medA")
+check "pix.med.J.get.closed" "CLOSED" "$(value "$out" status=)"
+out=$(bank "pix.med.recon|$medF|MATCHED|OP01")
+check "pix.med.J.recon.rc" "00" "$(value "$out" rc=)"
+check "pix.med.J.recon.status" "MATCHED" "$(value "$out" recon=)"
+out=$(bank "pix.med.list||$MED_PIX|")
+check "pix.med.J.list.count" "0000001" "$(value "$out" count=)"
+out=$(bank "pix.med.list|CLOSED||")
+check "pix.med.J.list.closed" "0000002" "$(value "$out" count=)"
+out=$(bank "pix.med.get|$medA")
+check "pix.med.J.restart.persist" "CLOSED" "$(value "$out" status=)"
+out=$(bank "ledger.trial")
+check "pix.med.J.final.trial" "BALANCED" "$(value "$out" msg=)"
+
+# --- scenario K: batch dry run is read-only (zero writes, no run record) ---
+med_case
+out=$(bank "pix.med.open|$MED_PIX|1000.00|BRL|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MK1|MRQ20")
+medK1=$(value "$out" medcase=)
+bank "pix.med.validate|$medK1|OP01|MK2" >/dev/null
+bank "pix.med.block|$medK1|OP01|MK3" >/dev/null
+med_case
+out=$(bank "pix.med.open|$MED_PIX|1000.00|BRL|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MK4|MRQ21")
+medK2=$(value "$out" medcase=)
+bank "pix.med.validate|$medK2|OP01|MK5" >/dev/null
+bank "pix.med.block|$medK2|OP01|MK6" >/dev/null
+out=$(bank "pix.med.batch.dry|")
+check "pix.med.K.dry.rc" "00" "$(value "$out" rc=)"
+check "pix.med.K.dry.status" "DRY" "$(value "$out" status=)"
+check "pix.med.K.dry.noexception" "0000000" "$(value "$out" inconsistent=)"
+dryScanned=$(value "$out" scanned=)
+out=$(bank "pix.med.batch.get|MED-BATCH-20261002")
+check "pix.med.K.dry.nowriterec" "23" "$(value "$out" rc=)"
+out=$(bank "pix.med.get|$medK1")
+check "pix.med.K.dry.untouched" "BLOCKED" "$(value "$out" status=)"
+out=$(bank "ledger.trial")
+check "pix.med.K.dry.trial" "BALANCED" "$(value "$out" msg=)"
+
+# --- scenario L: overdue expiry via batch, hold released exactly once ---
+sed -i 's/business-date=.*/business-date=2026-10-14/' etc/bank.cfg
+out=$(bank "pix.med.batch.dry|")
+check "pix.med.L.dry.expireelig" "Y" "$(test "$(value "$out" expireelig=)" -ge 3 && echo Y || echo N)"
+out=$(bank "pix.med.batch.run|MEDB-L|||OP01|MLC1")
+check "pix.med.L.run.rc" "00" "$(value "$out" rc=)"
+check "pix.med.L.run.completed" "COMPLETED" "$(value "$out" status=)"
+check "pix.med.L.run.scanned" "$dryScanned" "$(value "$out" scanned=)"
+check "pix.med.L.run.nofailed" "0000000" "$(value "$out" failed=)"
+check "pix.med.L.run.noretryreq" "0000000" "$(value "$out" retryreq=)"
+medLexpired=$(value "$out" expired=)
+medLprocessed=$(value "$out" processed=)
+for c in "$medK1" "$medK2" "$medG"; do
+    out=$(bank "pix.med.get|$c")
+    check "pix.med.L.expired.$c" "EXPIRED" "$(value "$out" status=)"
+    check "pix.med.L.holdgone.$c" "" "$(value "$out" hold=)"
+done
+out=$(bank "pix.med.get|$medK1")
+check "pix.med.L.deadlinekept" "20261013" "$(value "$out" deadline=)"
+out=$(bank "ledger.trial")
+check "pix.med.L.trial" "BALANCED" "$(value "$out" msg=)"
+
+# --- scenario M: replay and checkpoint restart after interruption ---
+out=$(bank "pix.med.batch.run|MEDB-L|||OP01|MLC2")
+check "pix.med.M.replay.flag" "Y" "$(value "$out" replay=)"
+check "pix.med.M.replay.rc" "00" "$(value "$out" rc=)"
+check "pix.med.M.replay.counts" "$medLexpired" "$(value "$out" expired=)"
+check "pix.med.M.replay.nostatechg" "$medLprocessed" "$(value "$out" processed=)"
+out=$(bank "pix.med.batch.get|MEDB-L")
+check "pix.med.M.get.rc" "00" "$(value "$out" rc=)"
+check "pix.med.M.get.status" "COMPLETED" "$(value "$out" status=)"
+med_case
+out=$(bank "pix.med.open|$MED_PIX|1000.00|BRL|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MM1|MRQ22")
+medM1=$(value "$out" medcase=)
+bank "pix.med.validate|$medM1|OP01|MM2" >/dev/null
+bank "pix.med.block|$medM1|OP01|MM3" >/dev/null
+med_case
+out=$(bank "pix.med.open|$MED_PIX|1000.00|BRL|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MM5|MRQ21B")
+medM2=$(value "$out" medcase=)
+bank "pix.med.validate|$medM2|OP01|MM6" >/dev/null
+bank "pix.med.block|$medM2|OP01|MM7" >/dev/null
+sed -i 's/business-date=.*/business-date=2026-10-26/' etc/bank.cfg
+out=$(bank "pix.med.batch.run|MEDB-M||1|OP01|MMC1")
+check "pix.med.M.fault.rc" "24" "$(value "$out" rc=)"
+check "pix.med.M.fault.running" "RUNNING" "$(value "$out" status=)"
+check "pix.med.M.fault.processed" "0000001" "$(value "$out" processed=)"
+out=$(bank "pix.med.batch.get|MEDB-M")
+check "pix.med.M.ckpt.running" "RUNNING" "$(value "$out" status=)"
+ckptLast=$(value "$out" lastcase=)
+out=$(bank "pix.med.get|$medM1")
+check "pix.med.M.ckpt.done" "EXPIRED" "$(value "$out" status=)"
+out=$(bank "pix.med.get|$medM2")
+check "pix.med.M.ckpt.pending" "BLOCKED" "$(value "$out" status=)"
+out=$(bank "pix.med.batch.run|MEDB-M|||OP01|MMC2")
+check "pix.med.M.resume.rc" "00" "$(value "$out" rc=)"
+check "pix.med.M.resume.completed" "COMPLETED" "$(value "$out" status=)"
+check "pix.med.M.resume.processed" "0000001" "$(value "$out" processed=)"
+check "pix.med.M.resume.lastcasegt" "Y" "$(test "$(value "$out" lastcase=)" > "$ckptLast" && echo Y || echo N)"
+out=$(bank "pix.med.get|$medM2")
+check "pix.med.M.resumed.expired" "EXPIRED" "$(value "$out" status=)"
+out=$(bank "pix.med.batch.run|MEDB-M|||OP01|MMC3")
+check "pix.med.M.double.replay" "Y" "$(value "$out" replay=)"
+out=$(bank "ledger.trial")
+check "pix.med.M.trial" "BALANCED" "$(value "$out" msg=)"
+
+# --- scenario N: claimant scope + batch run lock mutual exclusion ---
+med_case
+out=$(bank "pix.med.open|$MED_PIX|1000.00|BRL|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MP1|MRQ25")
+medP1=$(value "$out" medcase=); medP1claim=$(value "$out" claimant=)
+bank "pix.med.validate|$medP1|OP01|MP2" >/dev/null
+bank "pix.med.block|$medP1|OP01|MP3" >/dev/null
+med_case
+out=$(bank "pix.med.open|$MED_PIX|1000.00|BRL|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MP4|MRQ26")
+medP2=$(value "$out" medcase=)
+bank "pix.med.validate|$medP2|OP01|MP5" >/dev/null
+bank "pix.med.block|$medP2|OP01|MP6" >/dev/null
+sed -i 's/business-date=.*/business-date=2026-11-07/' etc/bank.cfg
+out=$(bank "pix.med.lock|A|MEDB-MEDB-PLOCK|OTHEROP")
+check "pix.med.N.acquire" "00" "$(value "$out" rc=)"
+out=$(bank "pix.med.batch.run|MEDB-PLOCK|||OP01|MPC1")
+check "pix.med.N.contend.rc" "24" "$(value "$out" rc=)"
+check "pix.med.N.contend.msg" "Y" "$(printf '%s' "$out" | grep -q "ALREADY RUNNING" && echo Y || echo N)"
+out=$(bank "pix.med.get|$medP1")
+check "pix.med.N.contend.untouched" "BLOCKED" "$(value "$out" status=)"
+out=$(bank "pix.med.lock|R|MEDB-MEDB-PLOCK|OTHEROP")
+check "pix.med.N.release" "00" "$(value "$out" rc=)"
+out=$(bank "pix.med.batch.run|MEDB-P|$medP1claim||OP01|MPC2")
+check "pix.med.N.scope.rc" "00" "$(value "$out" rc=)"
+check "pix.med.N.scope.scanned" "0000001" "$(value "$out" scanned=)"
+check "pix.med.N.scope.expired" "0000001" "$(value "$out" expired=)"
+out=$(bank "pix.med.get|$medP1")
+check "pix.med.N.scope.done" "EXPIRED" "$(value "$out" status=)"
+out=$(bank "pix.med.get|$medP2")
+check "pix.med.N.scope.other" "BLOCKED" "$(value "$out" status=)"
+
+# --- scenario O: batch recovers unknown devolutions, never double-pays ---
+med_case
+out=$(bank "pix.med.open|$MED_PIX|1000.00|BRL|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MN1|MRQ23")
+medN=$(value "$out" medcase=)
+bank "pix.med.validate|$medN|OP01|MN2" >/dev/null
+bank "pix.med.block|$medN|OP01|MN3" >/dev/null
+bank "pix.med.decide|$medN|APPROVE||fund|OP01|MN4" >/dev/null
+out=$(bank "pix.med.execute|$medN|TIMEOUT|OP01|MN5")
+medNdevol=$(value "$out" devol=)
+check "pix.med.O.timeout" "DEVOLV-UNK" "$(value "$out" status=)"
+out=$(bank "pix.med.batch.run|MEDB-N|||OP01|MNC1|TIMEOUT")
+check "pix.med.O.stuck.rc" "00" "$(value "$out" rc=)"
+check "pix.med.O.stuck.retryreq" "0000001" "$(value "$out" retryreq=)"
+check "pix.med.O.stuck.exceptions" "0000001" "$(value "$out" exceptions=)"
+check "pix.med.O.stuck.completed" "COMPLETED" "$(value "$out" status=)"
+out=$(bank "reconciliation.exceptions|MEDB-N")
+check "pix.med.O.exc.count" "000000001" "$(value "$out" exceptions=)"
+check "pix.med.O.exc.code" "1" "$(printf '%s' "$out" | grep -c 'code=MEDRETRY')"
+out=$(bank "pix.med.batch.run|MEDB-N2|||OP01|MNC2")
+check "pix.med.O.rec.retried" "0000001" "$(value "$out" retried=)"
+check "pix.med.O.rec.exceptions" "0000000" "$(value "$out" exceptions=)"
+out=$(bank "pix.med.get|$medN")
+check "pix.med.O.rec.status" "DEVOLVED" "$(value "$out" status=)"
+check "pix.med.O.rec.returned" "1000.00" "$(value "$out" returned=)"
+check "pix.med.O.rec.sameid" "$medNdevol" "$(value "$out" devol=)"
+out=$(bank "pix.get|$MED_PIX")
+check "pix.med.O.orig.full" "FULL" "$(value "$out" dev=)"
+out=$(bank "ledger.balance|$MED_PAYEE")
+check "pix.med.O.payee.once" "500000.00" "$(value "$out" ledger=)"
+out=$(bank "ledger.trial")
+check "pix.med.O.trial" "BALANCED" "$(value "$out" msg=)"
+
+# --- scenario P: reconciliation refresh + manual verdict guard ---
+med_case
+out=$(bank "pix.med.open|$MED_PIX|1000.00|BRL|$MED_PAYEE_CUST|PAYEE|FRAUDE|Y|OP01|MO1|MRQ24")
+medO=$(value "$out" medcase=)
+bank "pix.med.validate|$medO|OP01|MO2" >/dev/null
+bank "pix.med.block|$medO|OP01|MO3" >/dev/null
+bank "pix.med.decide|$medO|APPROVE||fund|OP01|MO4" >/dev/null
+out=$(bank "pix.med.execute|$medO||OP01|MO5")
+medOdevol=$(value "$out" devol=)
+check "pix.med.P.exec" "DEVOLVED" "$(value "$out" status=)"
+out=$(bank "pix.med.batch.dry|")
+reconBefore=$(value "$out" reconelig=)
+out=$(bank "pix.med.batch.run|MEDB-O|||OP01|MOC1")
+check "pix.med.P.run.rc" "00" "$(value "$out" rc=)"
+refreshed=$(value "$out" refreshed=)
+check "pix.med.P.refreshed.ge1" "Y" "$(test "$refreshed" -ge 1 && echo Y || echo N)"
+out=$(bank "pix.med.get|$medO")
+medOrecon=$(value "$out" recon=)
+check "pix.med.P.recon.set" "Y" "$(test -n "$medOrecon" && echo Y || echo N)"
+out=$(bank "pix.get|$medOdevol")
+devolState=$(value "$out" status=)
+wantRecon="POSTED"
+if [ "$devolState" = "RECONCILED" ]; then wantRecon="RECONCILED"; fi
+if [ "$devolState" = "SETTLED" ]; then wantRecon="SETTLED"; fi
+check "pix.med.P.recon.value" "$wantRecon" "$medOrecon"
+out=$(bank "pix.med.batch.dry|")
+reconAfter=$(value "$out" reconelig=)
+check "pix.med.P.recon.dropped" "Y" "$(test "$reconBefore" -gt "$reconAfter" && echo Y || echo N)"
+out=$(bank "pix.med.recon|$medO|MATCHED|OP01")
+check "pix.med.P.manual" "MATCHED" "$(value "$out" recon=)"
+out=$(bank "pix.med.batch.dry|")
+check "pix.med.P.guard" "Y" "$(test "$(value "$out" reconelig=)" = "$reconAfter" && echo Y || echo N)"
+
+# --- scenario Q: full EOD integration (auto run id per business date) ---
+out=$(bank "batch.eod|OP01|MQ1|EODMED")
+check "pix.med.Q.eod.rc" "00" "$(value "$out" rc=)"
+out=$(bank "pix.med.batch.get|MED-BATCH-20261107")
+check "pix.med.Q.eod.autoid" "00" "$(value "$out" rc=)"
+check "pix.med.Q.eod.completed" "COMPLETED" "$(value "$out" status=)"
+check "pix.med.Q.eod.report" "Y" "$(grep -rq 'MEDBATCH-EOD' var/out/ 2>/dev/null && echo Y || echo N)"
+out=$(bank "pix.med.get|$medP2")
+check "pix.med.Q.eod.p2expired" "EXPIRED" "$(value "$out" status=)"
+sed -i 's/business-date=.*/business-date=2026-11-08/' etc/bank.cfg
+out=$(bank "batch.eod|OP01|MQ2|EODMED2")
+check "pix.med.Q.eod2.rc" "00" "$(value "$out" rc=)"
+out=$(bank "pix.med.batch.get|MED-BATCH-20261108")
+check "pix.med.Q.eod2.autoid" "00" "$(value "$out" rc=)"
+check "pix.med.Q.eod2.replay" "Y" "$(printf '%s' "$(bank 'pix.med.batch.run|MED-BATCH-20261107|||OP01|MQ3')" | grep -q 'replay=Y' && echo Y || echo N)"
+out=$(bank "pix.med.get|$medP2")
+check "pix.med.Q.eod2.p2expired" "EXPIRED" "$(value "$out" status=)"
+out=$(bank "pix.med.batch.get|MED-BATCH-20261107")
+check "pix.med.Q.eod.noclobber" "COMPLETED" "$(value "$out" status=)"
+out=$(bank "ledger.trial")
+check "pix.med.Q.eod.trial" "BALANCED" "$(value "$out" msg=)"
+
+sed -i 's/business-date=.*/business-date=2026-10-02/' etc/bank.cfg
+
 
 cp "$CFG_BAK" etc/bank.cfg
 
