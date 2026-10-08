@@ -50,6 +50,8 @@ COPY "BLIMP".
 01 WS-ROLE PIC X(12).
 01 WS-ACCT PIC X(12).
 01 WS-ACCT-CUST PIC X(12).
+01 WS-I PIC 9(02).
+01 WS-SPL-TOT PIC S9(15)V99 COMP-3.
 
 LINKAGE SECTION.
 COPY "BPXPP".
@@ -118,6 +120,23 @@ PROCEDURE DIVISION USING BK-PX-PARMS.
     GOBACK.
 
 VALIDATE-OUT.
+    IF XP-SPLIT = "Y"
+        PERFORM V-SPLIT-OUT
+        IF XP-RC NOT = "00"
+            GOBACK
+        END-IF
+        MOVE XP-PAYER-ACCT TO WS-ACCT
+        PERFORM CHECK-PAYER-ACCOUNT
+        IF XP-RC NOT = "00"
+            GOBACK
+        END-IF
+        PERFORM CHECK-PAYER-PARTICIPANT
+        IF XP-RC NOT = "00"
+            GOBACK
+        END-IF
+        PERFORM CHECK-PIX-FUNDS
+        GOBACK
+    END-IF
     EVALUATE FUNCTION TRIM(XP-MODALITY)
         WHEN "MANUAL" PERFORM V-MANUAL-OUT
         WHEN "KEY" PERFORM V-KEY-OUT
@@ -270,22 +289,26 @@ V-QR-OUT.
         EXIT PARAGRAPH
     END-IF
     MOVE SPACES TO BK-PX-QR-PARMS
-    MOVE "QR-GET" TO XQ-OP
+    MOVE "QR-CHECK" TO XQ-OP
     MOVE XP-QR-ID TO XQ-QR-ID
     CALL "BPXQR" USING BK-PX-QR-PARMS
-    IF XQ-RC NOT = "00"
+    IF XQ-RC = "23"
         MOVE "20" TO XP-RC
         MOVE "PIX QR NOT FOUND" TO XP-MSG
+        EXIT PARAGRAPH
+    END-IF
+    IF XQ-RC NOT = "00"
+        MOVE "20" TO XP-RC
+        IF XQ-MSG = "PIX QR EXPIRED"
+            MOVE "PIX QR EXPIRED" TO XP-MSG
+        ELSE
+            MOVE "PIX QR NOT AVAILABLE" TO XP-MSG
+        END-IF
         EXIT PARAGRAPH
     END-IF
     IF XQ-STATUS NOT = "PUBLISHED" AND XQ-STATUS NOT = "READ"
         MOVE "20" TO XP-RC
         MOVE "PIX QR NOT AVAILABLE" TO XP-MSG
-        EXIT PARAGRAPH
-    END-IF
-    IF XQ-EXPIRE-DATE NOT = 0 AND XQ-EXPIRE-DATE < XP-DATE
-        MOVE "20" TO XP-RC
-        MOVE "PIX QR EXPIRED" TO XP-MSG
         EXIT PARAGRAPH
     END-IF
     IF XQ-AMOUNT > 0 AND XP-AMOUNT NOT = XQ-AMOUNT
@@ -381,6 +404,131 @@ CHECK-PAYER-PARTICIPANT.
         MOVE "PIX PAYER PARTICIPANT IS NOT THIS INSTITUTION"
             TO XP-MSG
     END-IF.
+
+SPLIT-ACCT-CHECKS.
+    IF AO-RC NOT = "00"
+        MOVE "20" TO XP-RC
+        MOVE "ALLOCATION ACCOUNT NOT FOUND" TO XP-MSG
+        EXIT PARAGRAPH
+    END-IF
+    IF AO-STATUS NOT = "AC"
+        MOVE "20" TO XP-RC
+        MOVE "ALLOCATION ACCOUNT NOT ACTIVE" TO XP-MSG
+        EXIT PARAGRAPH
+    END-IF
+    IF AO-CURRENCY NOT = XP-CURRENCY
+        MOVE "20" TO XP-RC
+        MOVE "ALLOCATION CURRENCY MISMATCH" TO XP-MSG
+    END-IF.
+
+V-SPLIT-OUT.
+    IF XP-SPLIT-CNT < 1 OR XP-SPLIT-CNT > 20
+        MOVE "20" TO XP-RC
+        MOVE "SPLIT REQUIRES 1 TO 20 ALLOCATIONS" TO XP-MSG
+        GOBACK
+    END-IF
+    IF XP-KEY-ID NOT = SPACES OR XP-QR-ID NOT = SPACES
+        MOVE "20" TO XP-RC
+        MOVE "SPLIT PAYEE MUST BE THE ALLOCATION TABLE"
+            TO XP-MSG
+        GOBACK
+    END-IF
+    MOVE 0 TO WS-SPL-TOT
+    PERFORM VARYING WS-I FROM 1 BY 1 UNTIL WS-I > XP-SPLIT-CNT
+        IF XP-PS-SEQ(WS-I) NOT = WS-I
+            MOVE "20" TO XP-RC
+            MOVE "SPLIT ALLOCATION SEQ NOT CONTIGUOUS"
+                TO XP-MSG
+            GOBACK
+        END-IF
+        IF FUNCTION TRIM(XP-PS-ROLE(WS-I)) NOT = "CUSTOMER" AND
+           FUNCTION TRIM(XP-PS-ROLE(WS-I)) NOT = "MERCHANT" AND
+           FUNCTION TRIM(XP-PS-ROLE(WS-I)) NOT = "PARTICIPANT" AND
+           FUNCTION TRIM(XP-PS-ROLE(WS-I)) NOT = "TAX"
+            MOVE "20" TO XP-RC
+            MOVE "UNSUPPORTED ALLOCATION ROLE" TO XP-MSG
+            GOBACK
+        END-IF
+        IF FUNCTION TRIM(XP-PS-TYPE(WS-I)) NOT = "MAIN" AND
+           FUNCTION TRIM(XP-PS-TYPE(WS-I)) NOT = "TAX"
+            MOVE "20" TO XP-RC
+            MOVE "UNSUPPORTED ALLOCATION TYPE" TO XP-MSG
+            GOBACK
+        END-IF
+        IF XP-PS-ID(WS-I) = SPACES
+            MOVE "20" TO XP-RC
+            MOVE "ALLOCATION DESTINATION REQUIRED" TO XP-MSG
+            GOBACK
+        END-IF
+        IF XP-PS-AMT(WS-I) <= 0
+            MOVE "20" TO XP-RC
+            MOVE "ALLOCATION AMOUNT MUST BE POSITIVE" TO XP-MSG
+            GOBACK
+        END-IF
+        IF FUNCTION TRIM(XP-PS-TYPE(WS-I)) = "TAX"
+            IF XP-PS-TAXTYPE(WS-I) = SPACES OR
+               XP-PS-TAXCAT(WS-I) = SPACES OR
+               XP-PS-DOCREF(WS-I) = SPACES
+                MOVE "20" TO XP-RC
+                MOVE "TAX ALLOCATION METADATA INCOMPLETE"
+                    TO XP-MSG
+                GOBACK
+            END-IF
+        ELSE
+            IF XP-PS-TAXTYPE(WS-I) NOT = SPACES OR
+               XP-PS-TAXCAT(WS-I) NOT = SPACES OR
+               XP-PS-DOCREF(WS-I) NOT = SPACES
+                MOVE "20" TO XP-RC
+                MOVE "TAX METADATA ON NON-TAX ALLOCATION"
+                    TO XP-MSG
+                GOBACK
+            END-IF
+        END-IF
+        EVALUATE FUNCTION TRIM(XP-PS-ROLE(WS-I))
+            WHEN "PARTICIPANT"
+                MOVE XP-PS-ID(WS-I) TO WS-PART-ID
+                MOVE "RECEIVE" TO WS-ROLE
+                PERFORM QUERY-PARTICIPANT
+                CALL "BPXRT" USING BK-PX-RT-PARMS
+                IF RT-RC NOT = "00"
+                    MOVE "20" TO XP-RC
+                    MOVE RT-MSG TO XP-MSG
+                    GOBACK
+                END-IF
+            WHEN "TAX"
+                CALL "BACQRY" USING XP-PS-ID(WS-I) WS-ACCT-OUT
+                IF AO-RC NOT = "00"
+                    MOVE XP-PS-ID(WS-I) TO WS-PART-ID
+                    MOVE "RECEIVE" TO WS-ROLE
+                    PERFORM QUERY-PARTICIPANT
+                    CALL "BPXRT" USING BK-PX-RT-PARMS
+                    IF RT-RC NOT = "00"
+                        MOVE "20" TO XP-RC
+                        MOVE "TAX DEST NOT RESOLVABLE"
+                            TO XP-MSG
+                        GOBACK
+                    END-IF
+                ELSE
+                    PERFORM SPLIT-ACCT-CHECKS
+                    IF XP-RC NOT = "00"
+                        GOBACK
+                    END-IF
+                END-IF
+            WHEN OTHER
+                CALL "BACQRY" USING XP-PS-ID(WS-I) WS-ACCT-OUT
+                PERFORM SPLIT-ACCT-CHECKS
+                IF XP-RC NOT = "00"
+                    GOBACK
+                END-IF
+        END-EVALUATE
+        ADD XP-PS-AMT(WS-I) TO WS-SPL-TOT
+    END-PERFORM
+    IF WS-SPL-TOT NOT = XP-AMOUNT
+        MOVE "20" TO XP-RC
+        MOVE "PIX SPLIT ALLOCATION SUM != GROSS" TO XP-MSG
+        GOBACK
+    END-IF
+    MOVE WS-SPL-TOT TO XP-SPLIT-TOTAL.
 
 CHECK-PAYEE-PARTICIPANT.
     IF XP-PAYEE-PART = SPACES

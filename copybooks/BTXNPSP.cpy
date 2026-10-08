@@ -19,6 +19,13 @@
           05 TPO-PRINCIPAL     PIC S9(15)V99 COMP-3.
           05 TPO-INTEREST      PIC S9(15)V99 COMP-3.
           05 TPO-FEE-AMT       PIC S9(15)V99 COMP-3.
+          05 TPO-SPLIT-CNT     PIC 9(02).
+          05 TPO-S-ROW OCCURS 20 TIMES.
+             10 TPO-PS-SEQ     PIC 9(02).
+             10 TPO-PS-ROLE    PIC X(12).
+             10 TPO-PS-DEST    PIC X(12).
+             10 TPO-PS-AMT     PIC S9(15)V99 COMP-3.
+             10 TPO-PS-TYPE    PIC X(10).
           05 TPO-DUE-DATE      PIC 9(08).
           05 TPO-INSTALLMENT   PIC 9(04).
           05 TPO-RC            PIC X(02).

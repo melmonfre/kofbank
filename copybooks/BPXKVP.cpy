@@ -6,3 +6,4 @@
           05 KV-HASH           PIC X(16).
           05 KV-RC             PIC X(02).
           05 KV-MSG            PIC X(80).
+          05 KV-VERIFIED       PIC X(12).

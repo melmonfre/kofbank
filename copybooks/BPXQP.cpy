@@ -28,10 +28,10 @@
           05 XQ-STATUS         PIC X(12).
           05 XQ-PIX-ID         PIC X(12).
           05 XQ-READ-COUNT     PIC 9(05).
-          05 XQ-TTL            PIC 9(06).
+          05 XQ-TTL            PIC 9(07).
           05 XQ-DATE           PIC 9(08).
           05 XQ-CREATE-DATE    PIC 9(08).
-          05 XQ-EXPIRE-DATE    PIC 9(08).
+          05 XQ-EXPIRES-AT    PIC 9(14).
           05 XQ-REPLAY         PIC X(01).
           05 XQ-OPERATOR       PIC X(12).
           05 XQ-CORR           PIC X(24).

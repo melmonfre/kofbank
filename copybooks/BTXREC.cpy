@@ -18,6 +18,15 @@
        05 TXN-FEE-AMT       PIC S9(15)V99 COMP-3.
        05 TXN-DUE-DATE      PIC 9(08).
        05 TXN-INSTALLMENT   PIC 9(04).
+      *> Split legs (type SPLITPIX): persisted with the transaction so
+      *> posting is restartable and the journal is reproducible.
+       05 TXN-SPLIT-CNT     PIC 9(02).
+       05 TXN-S-ROW OCCURS 20 TIMES.
+          10 TXN-PS-SEQ     PIC 9(02).
+          10 TXN-PS-ROLE    PIC X(12).
+          10 TXN-PS-DEST    PIC X(12).
+          10 TXN-PS-AMT     PIC S9(15)V99 COMP-3.
+          10 TXN-PS-TYPE    PIC X(10).
        05 TXN-JRN-ID        PIC X(20).
        05 TXN-CREATED       PIC 9(08).
        05 TXN-POSTED        PIC 9(08).

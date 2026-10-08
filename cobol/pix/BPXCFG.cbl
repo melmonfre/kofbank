@@ -30,12 +30,22 @@ COPY "BPXCFG".
 
 PROCEDURE DIVISION USING BK-PX-CFG.
     MOVE "00" TO PC-STATUS
+    MOVE "5.13" TO PC-SPI-VER
     MOVE "N" TO PC-ENABLED
     MOVE SPACES TO PC-RAIL PC-SELF PC-CURRENCY PC-ADAPTER PC-E2E-ISPB
     MOVE SPACES TO PC-STL-ACCT PC-STL-CASH PC-SIMULATE
+    MOVE "LOCAL_DOUBLE" TO PC-ENVIRONMENT
+    MOVE "LOCALDOUBLE" TO PC-TRANSPORT
+    MOVE 5 TO PC-TIMEOUT-SECS
+    MOVE 3 TO PC-MAX-RETRY
+    MOVE "LOCAL_DOUBLE" TO PC-SECURITY
+    MOVE "HASH-DOUBLE" TO PC-SIGN-ALG
+    MOVE SPACES TO PC-CERT-REF PC-KEY-REF PC-TRUSTED-SUBJ
+    MOVE "BCLK" TO PC-CLOCK-REF
     MOVE 0 TO PC-AMOUNT-MAX
-    MOVE 0 TO PC-KEY-LIMIT PC-QR-TTL PC-DEV-DAYS PC-MED-DAYS
+    MOVE 0 TO PC-KEY-LIMIT PC-QR-EXP-DEF PC-DEV-DAYS PC-MED-DAYS
         PC-STALE-DAYS PC-EXPIRE-DAYS PC-STL-LAG
+        PC-CLAIM-RES-DAYS PC-CLAIM-CMP-DAYS
     ACCEPT WS-HOME FROM ENVIRONMENT "BANK_HOME"
     MOVE SPACES TO WS-CFG-PATH
     STRING FUNCTION TRIM(WS-HOME) "/etc/pix.cfg"
@@ -91,21 +101,49 @@ PARSE-LINE.
         WHEN "keys-per-account"
             PERFORM TO-NUMBER
             MOVE WS-NUM TO PC-KEY-LIMIT
-        WHEN "qr-ttl-minutes"
+        WHEN "qr-expiration-default-seconds"
             PERFORM TO-NUMBER
-            MOVE WS-NUM TO PC-QR-TTL
+            MOVE WS-NUM TO PC-QR-EXP-DEF
         WHEN "devolution-window-days"
             PERFORM TO-NUMBER
             MOVE WS-NUM TO PC-DEV-DAYS
         WHEN "med-window-days"
             PERFORM TO-NUMBER
             MOVE WS-NUM TO PC-MED-DAYS
+        WHEN "environment"
+            MOVE WS-VAL(1:16) TO PC-ENVIRONMENT
+        WHEN "transport-adapter"
+            MOVE WS-VAL(1:12) TO PC-TRANSPORT
+        WHEN "transport-timeout-secs"
+            MOVE FUNCTION NUMVAL(WS-VAL) TO PC-TIMEOUT-SECS
+        WHEN "outbound-max-retry"
+            MOVE FUNCTION NUMVAL(WS-VAL) TO PC-MAX-RETRY
+        WHEN "security-adapter"
+            MOVE WS-VAL(1:12) TO PC-SECURITY
+        WHEN "sign-algorithm"
+            MOVE WS-VAL(1:12) TO PC-SIGN-ALG
+        WHEN "signing-cert-ref"
+            MOVE WS-VAL(1:24) TO PC-CERT-REF
+        WHEN "signing-key-ref"
+            MOVE WS-VAL(1:24) TO PC-KEY-REF
+        WHEN "trusted-issuer-subject"
+            MOVE WS-VAL(1:24) TO PC-TRUSTED-SUBJ
+        WHEN "boundary-clock-ref"
+            MOVE WS-VAL(1:08) TO PC-CLOCK-REF
+        WHEN "spi-message-version"
+            MOVE FUNCTION TRIM(WS-VAL) TO PC-SPI-VER
         WHEN "stale-days"
             PERFORM TO-NUMBER
             MOVE WS-NUM TO PC-STALE-DAYS
         WHEN "expire-days"
             PERFORM TO-NUMBER
             MOVE WS-NUM TO PC-EXPIRE-DAYS
+        WHEN "claim-resolution-days"
+            PERFORM TO-NUMBER
+            MOVE WS-NUM TO PC-CLAIM-RES-DAYS
+        WHEN "claim-completion-days"
+            PERFORM TO-NUMBER
+            MOVE WS-NUM TO PC-CLAIM-CMP-DAYS
         WHEN "settlement-lag-days"
             PERFORM TO-NUMBER
             MOVE WS-NUM TO PC-STL-LAG

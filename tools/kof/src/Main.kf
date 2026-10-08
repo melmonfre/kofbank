@@ -1,0 +1,58 @@
+Int check(String name, Bool cond) {
+    if (cond) {
+        println("ok   " + name)
+        return 0
+    }
+    println("FAIL " + name)
+    return 1
+}
+
+main() {
+    var failures = 0
+    var h = contract()
+    failures = failures + check("contract.handshake", valueOf(h, "contract") == "KBCLI-1")
+    failures = failures + check("contract.transport", valueOf(h, "transport") == "request-line/keyvalue")
+    failures = failures + check("health.rc", valueOf(health(), "rc") == "00")
+
+    var now = "" + time.now()
+    var seed = now.substring(now.length() - 8, now.length())
+    var doc = "99" + seed + "0001"
+    var cust = createCustomer("KOF ECOSYSTEM " + seed, doc, "OPS01", "KC" + seed)
+    var custId = valueOf(cust, "id")
+    failures = failures + check("customer.created", valueOf(cust, "rc") == "00" && custId != "")
+
+    var acct = openAccount(custId, "OPS01", "KA" + seed)
+    var acctId = valueOf(acct, "id")
+    failures = failures + check("account.opened", valueOf(acct, "rc") == "00" && acctId != "")
+
+    var before = balance(acctId)
+    failures = failures + check("balance.before", valueOf(before, "rc") == "00")
+
+    var reqId = "KR-" + seed
+    var first = deposit(acctId, "250000", "KOF SALARY", "OPS01", "KCORR" + seed, reqId)
+    failures = failures + check("txn.accepted", first.rc == "00")
+    failures = failures + check("txn.pending", first.status == "VA")
+
+    var replay = deposit(acctId, "250000", "KOF SALARY", "OPS01", "KCORR" + seed, reqId)
+    failures = failures + check("replay.same.id", replay.id == first.id && replay.rc == "00")
+
+    var conflict = deposit(acctId, "99900", "KOF SALARY TAMPERED", "OPS01", "KCORR" + seed, reqId)
+    failures = failures + check("conflict.rejected", conflict.rc == "26")
+
+    failures = failures + check("txn.authorized", txnRequest("authorize", first.id, "OPS01", "KCORR" + seed, reqId + "-AU").status == "AU")
+    failures = failures + check("txn.posted", txnRequest("post", first.id, "OPS01", "KCORR" + seed, reqId + "-PO").status == "PO")
+    failures = failures + check("txn.settled", txnRequest("settle", first.id, "OPS01", "KCORR" + seed, reqId + "-ST").status == "ST")
+    failures = failures + check("txn.completed", txnRequest("complete", first.id, "OPS01", "KCORR" + seed, reqId + "-CP").status == "CP")
+
+    var after = balance(acctId)
+    failures = failures + check("balance.before.value", valueOf(before, "ledger") == "500.00")
+    failures = failures + check("balance.increased", valueOf(after, "ledger") == "250500.00")
+
+    var lookup = txnRequest("get", first.id, "OPS01", "KCORR" + seed, reqId + "-QRY")
+    failures = failures + check("txn.get.completed", lookup.status == "CP")
+
+    if (failures > 0) {
+        process.exit(1)
+    }
+    process.exit(0)
+}

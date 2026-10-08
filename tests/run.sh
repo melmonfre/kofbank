@@ -28,9 +28,17 @@ value() {
 }
 
 reset() {
-    rm -rf var/data var/journal var/audit
-    mkdir -p var/data var/journal var/audit
+    rm -rf var/data var/journal var/audit var/run var/bkp
+    rm -rf var/data.precall.*
+    mkdir -p var/data var/journal var/audit var/run
 }
+
+if [ "${1:-}" = "--reset-only" ]; then
+    export COB_LIBRARY_PATH="${COB_LIBRARY_PATH:-$PWD/build}"
+    reset
+    bank "ledger.init" >/dev/null
+    exit 0
+fi
 
 reset
 
@@ -263,6 +271,9 @@ out=$(bank "reconciliation.get|REC-RECON-LEDGER")
 check "recon.resolve.open" "000000000" "$(value "$out" open=)"
 check "recon.resolve.balanced" "BALANCED" "$(value "$out" status=)"
 
+grep -v '|JRNORPH1|' var/journal/postings.log > /tmp/kofbank.postings.jclean
+mv /tmp/kofbank.postings.jclean var/journal/postings.log
+
 out=$(bank "reconciliation.resolve|E99999999999|ACCEPT||OP02|x")
 check "recon.resolve.missing" "23" "$(value "$out" rc=)"
 out=$(bank "reconciliation.resolve|$exc|ADJUST||OP02|")
@@ -319,6 +330,9 @@ out=$(bank "reconciliation.get|REC-EXT-MISS")
 check "recon.failed.resume.matched" "000000001" "$(value "$out" matched=)"
 check "recon.failed.resume.cleared" "00" "$(value "$out" rc=)"
 
+grep -v '|JRNFB' var/journal/postings.log > /tmp/kofbank.postings.fbclean
+mv /tmp/kofbank.postings.fbclean var/journal/postings.log
+
 printf 'GLP|2000|D|          55.00|A00000000001|BRL|PAYGHOST1|20261002\n' >> var/journal/postings.log
 printf 'GLP|2000|C|          55.00|A00000000002|BRL|PAYGHOST1|20261002\n' >> var/journal/postings.log
 out=$(bank "reconciliation.run|PAYMENT|REC-PAY-GHOST")
@@ -341,7 +355,7 @@ out=$(bank "reconciliation.run|LEDGER|REC-BAL-MISMATCH")
 check "recon.balance.mismatch" "EXCEPTIONS" "$(value "$out" msg=)"
 out=$(bank "reconciliation.exceptions|REC-BAL-MISMATCH")
 check "recon.balance.mismatch.code" "2" "$(printf '%s' "$out" | grep -c 'code=MISMATCH')"
-cp /tmp/kofbank.postings.bak var/journal/postings.log
+grep -v '|PAYGHOST1|' /tmp/kofbank.postings.bak > var/journal/postings.log
 
 out=$(bank "batch.eod|OP01|R15|EOD1")
 check "payment.eod" "00" "$(value "$out" rc=)"
@@ -2329,10 +2343,1678 @@ check "pix.med.Q.eod.noclobber" "COMPLETED" "$(value "$out" status=)"
 out=$(bank "ledger.trial")
 check "pix.med.Q.eod.trial" "BALANCED" "$(value "$out" msg=)"
 
+# --- pix-claim: portability + possession + DICT sync regressions ---
+sed -i 's/business-date=.*/business-date=2026-10-02/' etc/bank.cfg
+pix_self="P00000000001"
+pix_other="P00000000002"
+pixc=$(value "$(bank "customer.create|P|CLM OWNER|CPF|22233344405|19900101|OP01|CC1")" id=)
+pixa=$(value "$(bank "account.open|$pixc|DMND|BRL|500000|OP01|CC2|OC1")" id=)
+pixb=$(value "$(bank "account.open|$pixc|DMND|BRL|500000|OP01|CC3|OC2")" id=)
+pixd=$(value "$(bank "customer.create|P|CLM OUTSIDER|CPF|33344455566|19900101|OP01|CC4")" id=)
+pixe=$(value "$(bank "account.open|$pixd|DMND|BRL|500000|OP01|CC5|OC3")" id=)
+pk_e=$(value "$(bank "pix.key.register|EMAIL|claim.me@KofBank.com|$pixa|$pixc|OP01|CR|CK1")" id=)
+pk_p=$(value "$(bank "pix.key.register|PHONE|+5511999990001|$pixa|$pixc|OP01|CR|CK2")" id=)
+pk_t=$(value "$(bank "pix.key.register|CPF|222.333.444-05|$pixa|$pixc|OP01|CR|CK3")" id=)
+pk_f=$(value "$(bank "pix.key.seed|PHONE|+5511999990009|$pix_other|ZZ99999999|ZZ88888888|FOREIGN OWNER|OP01")" keyid=)
+pk_f2=$(value "$(bank "pix.key.seed|PHONE|+5511999990010|$pix_other|ZZ99999998|ZZ88888887|FOREIGN OWNER2|OP01")" keyid=)
+pk_bad=$(value "$(bank "pix.key.seed|RANDOM|123e4567e89b12d3a456426614174000|$pix_other|ZZ99999997|ZZ88888886|EVPFOREIGN|OP01")" keyid=)
+pk_f3=$(value "$(bank "pix.key.seed|PHONE|+5511999990003|$pix_other|ZZ99999996|ZZ88888885|FOREIGN OWNER3|OP01")" keyid=)
+
+# A: portability happy path (EMAIL, same customer, other account)
+out=$(bank "pix.key.claim.create|$pk_e|PORTABILITY|$pixb|$pixc||CLMP-E1|OP01|CP1")
+check "pix.claim.A.create.rc" "00" "$(value "$out" rc=)"
+check "pix.claim.A.create.status" "OPEN" "$(value "$out" claim=)"
+check "pix.claim.A.resol" "20261004" "$(value "$out" resolend=)"
+check "pix.claim.A.compl" "20261005" "$(value "$out" complend=)"
+pc1=$(value "$out" claimid=)
+out=$(bank "pix.key.get|$pk_e")
+check "pix.claim.A.localmirror" "OPEN" "$(value "$out" claim=)"
+out=$(bank "pix.key.claim.ack|$pk_e|$pc1||OP01")
+check "pix.claim.A.ack.rc" "00" "$(value "$out" rc=)"
+check "pix.claim.A.ack.status" "WAITING_RESOLUTION" "$(value "$out" claim=)"
+out=$(bank "pix.key.claim.ack|$pk_e|$pc1||OP01")
+check "pix.claim.A.ack.idem" "WAITING_RESOLUTION" "$(value "$out" claim=)"
+out=$(bank "pix.key.claim.confirm|$pk_e|$pc1|ACCOUNT_CLOSURE|$pix_other|OP01")
+check "pix.claim.A.cfm.badactor" "20" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.confirm|$pk_e|$pc1|USER_REQUESTED|$pixd|OP01")
+check "pix.claim.A.cfm.badactor2" "20" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.confirm|$pk_e|$pc1|USER_REQUESTED||OP01")
+check "pix.claim.A.cfm.rc" "00" "$(value "$out" rc=)"
+check "pix.claim.A.cfm.status" "CONFIRMED" "$(value "$out" claim=)"
+check "pix.claim.A.cfm.acct" "$pixb" "$(value "$out" acct=)"
+out=$(bank "pix.key.claim.complete|$pk_e|$pc1||OP01")
+check "pix.claim.A.cmp.rc" "00" "$(value "$out" rc=)"
+check "pix.claim.A.cmp.status" "COMPLETED" "$(value "$out" claim=)"
+out=$(bank "pix.key.claim.complete|$pk_e|$pc1||OP01")
+check "pix.claim.A.cmp.idem" "COMPLETED" "$(value "$out" claim=)"
+out=$(bank "pix.key.lookup|EMAIL|claim.me@kofbank.com")
+check "pix.claim.A.owner.acct" "$pixb" "$(value "$out" acct=)"
+check "pix.claim.A.owner.cust" "$pixc" "$(value "$out" cust=)"
+check "pix.claim.A.owner.noclaim" "" "$(value "$out" claim=)"
+out=$(bank "pix.key.lookup|EMAIL|claim.me@KofBank.com")
+check "pix.claim.A.owner.self" "Y" "$(value "$out" self=)"
+
+# B: possession cross-PSP to completion (PHONE foreign -> self)
+out=$(bank "pix.key.claim.create|$pk_f|OWNERSHIP|$pixa|$pixc||CLMP-P1|OP01|CP2")
+check "pix.claim.B.create.rc" "00" "$(value "$out" rc=)"
+pos1=$(value "$out" claimid=)
+out=$(bank "pix.key.claim.ack|$pk_f|$pos1|$pix_other|OP01")
+check "pix.claim.B.ack.rc" "00" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.confirm|$pk_f|$pos1|DEFAULT_OPERATION|$pix_other|OP01")
+check "pix.claim.B.cfm.early" "20" "$(value "$out" rc=)"
+sed -i 's/business-date=.*/business-date=2026-10-05/' etc/bank.cfg
+out=$(bank "pix.key.claim.confirm|$pk_f|$pos1|DEFAULT_OPERATION|$pix_other|OP01")
+check "pix.claim.B.cfm.default" "00" "$(value "$out" rc=)"
+check "pix.claim.B.cfm.status" "CONFIRMED" "$(value "$out" claim=)"
+out=$(bank "pix.key.claim.complete|$pk_f|$pos1||OP01")
+check "pix.claim.B.cmp.blocked" "20" "$(value "$out" rc=)"
+sed -i 's/business-date=.*/business-date=2026-10-06/' etc/bank.cfg
+out=$(bank "pix.key.claim.complete|$pk_f|$pos1||OP01")
+check "pix.claim.B.cmp.rc" "00" "$(value "$out" rc=)"
+check "pix.claim.B.cmp.status" "COMPLETED" "$(value "$out" claim=)"
+sed -i 's/business-date=.*/business-date=2026-10-02/' etc/bank.cfg
+out=$(bank "pix.key.lookup|PHONE|+5511999990009")
+check "pix.claim.B.new.part" "$pix_self" "$(value "$out" part=)"
+check "pix.claim.B.new.acct" "$pixa" "$(value "$out" acct=)"
+check "pix.claim.B.new.cust" "$pixc" "$(value "$out" cust=)"
+check "pix.claim.B.new.self" "Y" "$(value "$out" self=)"
+
+# C: possession cancel matrix + donor restore
+out=$(bank "pix.key.claim.create|$pk_f2|OWNERSHIP|$pixa|$pixc||CLMP-P2|OP01|CP3")
+pos2=$(value "$out" claimid=)
+out=$(bank "pix.key.claim.confirm|$pk_f2|$pos2|USER_REQUESTED|$pix_other|OP01")
+check "pix.claim.C.cfm.before.ack" "20" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.ack|$pk_f2|$pos2|$pix_other|OP01")
+check "pix.claim.C.ack" "00" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.cancel|$pk_f2|$pos2|USER_REQUESTED|$pix_other|OP01")
+check "pix.claim.C.cancel.donor.user" "20" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.cancel|$pk_f2|$pos2|FRAUD|$pix_other|OP01")
+check "pix.claim.C.cancel.donor.fraud" "00" "$(value "$out" rc=)"
+check "pix.claim.C.cancelledby" "DONOR" "$(value "$out" cancelledby=)"
+out=$(bank "pix.key.claim.create|$pk_f2|OWNERSHIP|$pixa|$pixc||CLMP-P3|OP01|CP4")
+pos3=$(value "$out" claimid=)
+out=$(bank "pix.key.claim.cancel|$pk_f2|$pos3|USER_REQUESTED||OP01")
+check "pix.claim.C.cancel.claimer" "00" "$(value "$out" rc=)"
+check "pix.claim.C.cancel.claimer.status" "CANCELLED" "$(value "$out" claim=)"
+check "pix.claim.C.cancel.claimer.by" "CLAIMER" "$(value "$out" cancelledby=)"
+out=$(bank "pix.key.claim.create|$pk_f2|OWNERSHIP|$pixa|$pixc||CLMP-P4|OP01|CP5")
+pos4=$(value "$out" claimid=)
+out=$(bank "pix.key.claim.ack|$pk_f2|$pos4|$pix_other|OP01")
+check "pix.claim.C.ack4" "00" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.confirm|$pk_f2|$pos4|USER_REQUESTED|$pix_other|OP01")
+check "pix.claim.C.confirm4" "00" "$(value "$out" rc=)"
+check "pix.claim.C.confirm4.compl0" "00000000" "$(value "$out" complend=)"
+out=$(bank "pix.key.claim.cancel|$pk_f2|$pos4|FRAUD|$pix_other|OP01")
+check "pix.claim.C.cancel.confirmed" "00" "$(value "$out" rc=)"
+out=$(bank "pix.key.lookup|PHONE|+5511999990010")
+check "pix.claim.C.revert.part" "$pix_other" "$(value "$out" part=)"
+check "pix.claim.C.revert.acct" "ZZ99999998" "$(value "$out" acct=)"
+
+# D: create validation matrix
+out=$(bank "pix.key.claim.create|$pk_t|OWNERSHIP|$pixe|$pixd||CLMP-D1|OP01|CD1")
+check "pix.claim.D.phone.ownership.cust" "20" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.create|$pk_e|PORTABILITY|$pixe|$pixd||CLMP-D2|OP01|CD2")
+check "pix.claim.D.port.cust.mismatch" "20" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.create|$pk_bad|PORTABILITY|$pixb|$pixc||CLMP-D3|OP01|CD3")
+check "pix.claim.D.port.random" "20" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.create|$pk_e|PORTABILITY|$pixb|$pixc||CLMP-D4|OP01|CD4")
+check "pix.claim.D.port.same.acct" "22" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.create|$pk_t|PORTABILITY|$pixb|$pixc||CLMP-D5|OP01|CD5")
+check "pix.claim.D.cpf.port.ok" "00" "$(value "$out" rc=)"
+dk1=$(value "$out" claimid=)
+out=$(bank "pix.key.claim.cancel|$pk_t|$dk1|RECONCILIATION||OP01")
+check "pix.claim.D.cancel.recon.open" "00" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.create|$pk_e|OWNERSHIP|$pixe|$pixd||CLMP-D6|OP01|CD6")
+check "pix.claim.D.email.ownership" "20" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.cancel|$pk_t|$dk1|USER_REQUESTED||OP01")
+check "pix.claim.D.cancel.twice" "00" "$(value "$out" rc=)"
+check "pix.claim.D.cancel.twice.idem" "CANCELLED" "$(value "$out" claim=)"
+
+# E: idempotent create + conflicting body same request-id
+out=$(bank "pix.key.claim.create|$pk_f3|OWNERSHIP|$pixa|$pixc||CLMP-EX1|OP01|CE1")
+pe1=$(value "$out" claimid=)
+out=$(bank "pix.key.claim.create|$pk_f3|OWNERSHIP|$pixa|$pixc||CLMP-EX1|OP01|CE1R")
+check "pix.claim.E.replay.rc" "00" "$(value "$out" rc=)"
+check "pix.claim.E.replay.flag" "Y" "$(value "$out" replay=)"
+check "pix.claim.E.replay.id" "$pe1" "$(value "$out" claimid=)"
+out=$(bank "pix.key.claim.create|$pk_f3|OWNERSHIP|$pixb|$pixc||CLMP-EX1|OP01|CE2")
+check "pix.claim.E.conflict" "20" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.create|$pk_f3|OWNERSHIP|$pixb|$pixc||CLMP-E3|OP01|CE3")
+check "pix.claim.E.locked" "20" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.cancel|$pk_f3|$pe1|USER_REQUESTED||OP01")
+check "pix.claim.E.cancel.claimer" "00" "$(value "$out" rc=)"
+
+# F: key locked by claim + concurrency lock + portability cancel rules
+out=$(bank "pix.key.claim.create|$pk_t|PORTABILITY|$pixb|$pixc||CLMP-F1|OP01|CF1")
+pf1=$(value "$out" claimid=)
+out=$(bank "pix.key.change|$pk_t|$pixe|OP01|CF2|CFC")
+check "pix.claim.F.change.locked" "20" "$(value "$out" rc=)"
+out=$(bank "pix.key.delete|$pk_t|OP01|CF3|CFD")
+check "pix.claim.F.delete.locked" "20" "$(value "$out" rc=)"
+out=$(bank "pix.med.lock|A|DICTK-$pk_t|INTRUDER")
+check "pix.claim.F.grablock" "00" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.ack|$pk_t|$pf1||OP01")
+check "pix.claim.F.busy" "24" "$(value "$out" rc=)"
+out=$(bank "pix.med.lock|R|DICTK-$pk_t|INTRUDER")
+check "pix.claim.F.relock" "00" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.ack|$pk_t|$pf1||OP01")
+check "pix.claim.F.ack.after" "00" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.cancel|$pk_t|$pf1|RECONCILIATION||OP01")
+check "pix.claim.F.recon.waiting" "20" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.cancel|$pk_t|$pf1|ACCOUNT_CLOSURE||OP01")
+check "pix.claim.F.cancel.closer" "00" "$(value "$out" rc=)"
+check "pix.claim.F.cancel.closer.status" "CANCELLED" "$(value "$out" claim=)"
+out=$(bank "pix.key.delete|$pk_t|OP01|CF4|CFE")
+check "pix.claim.F.delete.after" "00" "$(value "$out" rc=)"
+
+# G: sync: other-participant notice, consistent, stale-base version guard
+out=$(bank "pix.key.sync|$pk_bad")
+check "pix.claim.G.sync.held.other" "yes" "$(grep -qa 'HELD BY OTHER' <<<"$out" && echo yes || echo no)"
+out=$(bank "pix.key.sync|$pk_e")
+check "pix.claim.G.sync.consistent" "00" "$(value "$out" rc=)"
+check "pix.claim.G.sync.claim.blank" "" "$(value "$out" claim=)"
+out=$(bank "pix.key.sync|$pk_f2|1")
+check "pix.claim.G.ver.stale" "22" "$(value "$out" rc=)"
+out=$(bank "pix.key.sync|$pk_f|0")
+check "pix.claim.G.ver.now" "00" "$(value "$out" rc=)"
+
+# H: lazy expiry at completion-period end
+out=$(bank "pix.key.claim.create|$pk_f2|OWNERSHIP|$pixa|$pixc||CLMP-H1|OP01|CH1")
+ph=$(value "$out" claimid=)
+check "pix.claim.H.create" "00" "$(value "$out" rc=)"
+sed -i 's/business-date=.*/business-date=2026-10-07/' etc/bank.cfg
+out=$(bank "pix.key.claim.ack|$pk_f2|$ph|$pix_other|OP01")
+check "pix.claim.H.expiry.ack" "20" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.get|$ph")
+check "pix.claim.H.expiry.status" "CANCELLED" "$(value "$out" claim=)"
+check "pix.claim.H.expiry.by" "EXPIRED" "$(value "$out" cancelledby=)"
+out=$(bank "pix.key.claim.get|$ph")
+check "pix.claim.H.expiry.reason" "DEFAULT_OPERATION" "$(value "$out" cancelr=)"
+out=$(bank "pix.key.lookup|PHONE|+5511999990010")
+check "pix.claim.H.expiry.entryclear" "" "$(value "$out" claim=)"
+check "pix.claim.H.expiry.donor" "$pix_other" "$(value "$out" part=)"
+out=$(bank "pix.key.claim.list|OPEN")
+check "pix.claim.H.list.open.zero" "0000" "$(value "$out" count=)"
+out=$(bank "pix.key.sync|$pk_f2")
+check "pix.claim.H.sync.after.expiry" "00" "$(value "$out" rc=)"
+sed -i 's/business-date=.*/business-date=2026-10-02/' etc/bank.cfg
+
+# I: stale claim pointer self-heal (ghost DICT entry)
+gk=$(value "$(bank "pix.key.seed|PHONE|+5599999999999|$pix_other|ZZ00000001|ZZ00000002|GHOST OWNER|OP01")" keyid=)
+python3 - <<'GEP'
+data=open('var/data/pxdict.idx','rb').read()
+pos=data.find(b'ZZ00000001')
+rs=pos-106
+buf=bytearray(data)
+buf[rs+202:rs+220]=b'OPEN              '
+buf[rs+220:rs+244]=b'CGHOST0001'.ljust(24)
+open('var/data/pxdict.idx','wb').write(bytes(buf))
+GEP
+out=$(bank "pix.key.lookup|PHONE|+5599999999999")
+check "pix.claim.I.ghost.lookup.rc" "00" "$(value "$out" rc=)"
+check "pix.claim.I.ghost.healed" "" "$(value "$out" claim=)"
+out=$(bank "pix.key.delete|$gk|OP01|CI1|CID")
+check "pix.claim.I.ghost.delete" "00" "$(value "$out" rc=)"
+out=$(bank "pix.key.claim.list|OPEN")
+check "pix.claim.I.list.open.zero" "0000" "$(value "$out" count=)"
+out=$(bank "pix.key.sync|$gk")
+check "pix.claim.I.sync.released" "23" "$(value "$out" rc=)"
+# J: audit + events
+check "pix.claim.J.audit.create" "yes" "$(grep -aq 'KEY-CLM-CRT' var/audit/audit.log && echo yes || echo no)"
+check "pix.claim.J.audit.confirm" "yes" "$(grep -aq 'KEY-CLM-CFM' var/audit/audit.log && echo yes || echo no)"
+check "pix.claim.J.event.claim" "yes" "$(grep -aq 'PIX.KEY.CLAIM.v1' var/journal/events.log && echo yes || echo no)"
+check "pix.claim.J.event.portability" "yes" "$(grep -aq 'PIX.KEY.PORTABILITY.v1' var/journal/events.log && echo yes || echo no)"
+check "pix.claim.J.event.sync" "yes" "$(grep -aq 'PIX.KEY.DICT-SYNC.v1' var/journal/events.log && echo yes || echo no)"
+check "pix.claim.J.no.keyleak" "no" "$(grep -aq '22233344405' var/data/pxdict.idx && echo yes || echo no)"
+
+
+# --- pix-qr-expiry: seconds-level UTC expiration regressions ---
+reset
+bank "ledger.init" >/dev/null
+bank "pix.rt.create|12345678|KOF|DEBITS|DPI|Y||OP01|CORP|QXE1" >/dev/null
+out=$(bank "customer.create|P|QR EXPIRY PAYER|CPF|123.456.789-09|19900101|OP01|QXE2")
+qxpc1=$(value "$out" id=)
+out=$(bank "account.open|$qxpc1|DMND|BRL|500000|OP01|QXE3|A")
+qxa1=$(value "$out" id=)
+out=$(bank "customer.create|P|QR EXPIRY PAYEE|CPF|234.567.890-92|19900101|OP01|QXE4")
+qxpc2=$(value "$out" id=)
+out=$(bank "account.open|$qxpc2|DMND|BRL|500000|OP01|QXE5|B")
+qxa2=$(value "$out" id=)
+out=$(bank "pix.key.register|CPF|23456789092|$qxa2|$qxpc2|OP01|QXE6|K")
+qxkey=$(value "$out" id=)
+
+export PIX_CLOCK_NOW=20261006100000
+# default expiration when omitted: 86400 seconds from the spec default
+out=$(bank "pix.qr.create|DYNAMIC|$qxa2|$qxkey|CPF|23456789092|30.00|PIX MERCHANT|SAO PAULO|0000|OP01|COR|QXD0")
+check "qr.expire.default.ttl" "0086400" "$(value "$out" ttlsec=)"
+check "qr.expire.default.expiresat" "20261007100000" "$(value "$out" expiresat=)"
+qrd=$(value "$out" id=)
+out=$(bank "pix.qr.check|$qrd|OP01")
+check "qr.expire.default.active.1s-before" "00" "$(value "$out" rc=)"
+out=$(PIX_CLOCK_NOW=20261007095959 bank "pix.qr.check|$qrd|OP01")
+check "qr.expire.default.active.lastsec" "00" "$(value "$out" rc=)"
+out=$(PIX_CLOCK_NOW=20261007100000 bank "pix.qr.check|$qrd|OP01")
+check "qr.expire.default.exact-boundary" "20" "$(value "$out" rc=)"
+check "qr.expire.default.exact-msg" "yes" "$(grep -aq '^msg=PIX QR EXPIRED' <<<"$out" && echo yes || echo no)"
+
+# explicit expiration in seconds
+out=$(bank "pix.qr.create|DYNAMIC|$qxa2|$qxkey|CPF|23456789092|30.00|PIX MERCHANT|SAO PAULO|0000|OP01|COR|QXD1|3600")
+qra=$(value "$out" id=)
+check "qr.expire.explicit.ttl" "0003600" "$(value "$out" ttlsec=)"
+check "qr.expire.explicit.expiresat" "20261006110000" "$(value "$out" expiresat=)"
+out=$(PIX_CLOCK_NOW=20261006105959 bank "pix.qr.check|$qra|OP01")
+check "qr.expire.boundary.before" "00" "$(value "$out" rc=)"
+check "qr.expire.boundary.before.status" "PUBLISHED" "$(value "$out" status=)"
+out=$(PIX_CLOCK_NOW=20261006110000 bank "pix.qr.check|$qra|OP01")
+check "qr.expire.boundary.exact" "20" "$(value "$out" rc=)"
+out=$(PIX_CLOCK_NOW=20261006110001 bank "pix.qr.check|$qra|OP01")
+check "qr.expire.boundary.after" "20" "$(value "$out" rc=)"
+
+# checking expiration is pure and deterministic (no mutation, replay-safe)
+c1=$(PIX_CLOCK_NOW=20261006110000 bank "pix.qr.check|$qra|OP01")
+c2=$(PIX_CLOCK_NOW=20261006110000 bank "pix.qr.check|$qra|OP01")
+check "qr.expire.check.idempotent" "yes" "$([ "$(value "$c1" crc=)" = "$(value "$c2" crc=)" ] && echo yes || echo no)"
+check "qr.expire.check.keeps-status" "PUBLISHED" "$(value "$c1" status=)"
+out=$(bank "pix.qr.get|$qra")
+check "qr.expire.check.no-transition" "PUBLISHED" "$(value "$out" status=)"
+
+# reading (presentation) does not reset the expiration
+out=$(PIX_CLOCK_NOW=20261006103000 bank "pix.qr.read|$qra|OP01|COR|QXR1")
+check "qr.expire.read.active" "00" "$(value "$out" rc=)"
+check "qr.expire.read.count" "00001" "$(value "$out" reads=)"
+check "qr.expire.read.no-reset" "20261006110000" "$(value "$out" expiresat=)"
+out=$(PIX_CLOCK_NOW=20261006110000 bank "pix.qr.check|$qra|OP01")
+check "qr.expire.after.read.expired" "20" "$(value "$out" rc=)"
+
+# payment exactly one second before the boundary succeeds
+out=$(bank "pix.out.qr|$qra|30.00|$qxa1||qr pay valid|OP01|COR|QXP0")
+check "qr.expire.pay.valid.posted" "POSTED" "$(value "$out" status=)"
+out=$(bank "pix.qr.get|$qra")
+check "qr.expire.pay.valid.linked" "PAID" "$(value "$out" status=)"
+
+# expired QR produces zero financial effect
+out=$(bank "pix.qr.create|DYNAMIC|$qxa2|$qxkey|CPF|23456789092|60.00|PIX MERCHANT|SAO PAULO|0000|OP01|COR|QXD9|60")
+qrx=$(value "$out" id=)
+bal=$(value "$(bank "account.get|$qxa1")" balance=)
+out=$(PIX_CLOCK_NOW=20261006100100 bank "pix.out.qr|$qrx|60.00|$qxa1||qr pay expired|OP01|COR|QXP1")
+check "qr.expire.pay.expired.rc" "20" "$(value "$out" rc=)"
+check "qr.expire.pay.expired.msg" "yes" "$(grep -aq '^msg=PIX QR EXPIRED' <<<"$out" && echo yes || echo no)"
+check "qr.expire.pay.expired.noid" "" "$(value "$out" id=)"
+check "qr.expire.pay.expired.balance" "$bal" "$(value "$(bank "account.get|$qxa1")" balance=)"
+grep -aq "QXP1" var/journal/journal.log && qj=yes || qj=no
+check "qr.expire.pay.expired.no-journal" "no" "$qj"
+grep -aq "QXP1" var/data/px.idx && qt=yes || qt=no
+check "qr.expire.pay.expired.no-txn" "no" "$qt"
+
+# lazy transition on read, then terminal for the state machine
+out=$(bank "pix.qr.create|DYNAMIC|$qxa2|$qxkey|CPF|23456789092|40.00|PIX MERCHANT|SAO PAULO|0000|OP01|COR|QXD2|60")
+qrl=$(value "$out" id=)
+out=$(PIX_CLOCK_NOW=20261006100200 bank "pix.qr.read|$qrl|OP01|COR|QXR2")
+check "qr.expire.lazy.read.rc" "20" "$(value "$out" rc=)"
+check "qr.expire.lazy.read.msg" "yes" "$(grep -aq '^msg=PIX QR EXPIRED' <<<"$out" && echo yes || echo no)"
+out=$(bank "pix.qr.get|$qrl")
+check "qr.expire.lazy.status" "EXPIRED" "$(value "$out" status=)"
+out=$(bank "pix.qr.status|$qrl|PAID|OP01|COR|QXS1")
+check "qr.expire.lazy.paid-blocked" "20" "$(value "$out" rc=)"
+out=$(bank "pix.qr.status|$qrl|CANCELLED|OP01|COR|QXS2")
+check "qr.expire.lazy.cancel-blocked" "20" "$(value "$out" rc=)"
+
+# PAID directly after expiry (no prior read) is refused and transitions lazily
+out=$(bank "pix.qr.create|DYNAMIC|$qxa2|$qxkey|CPF|23456789092|15.00|PIX MERCHANT|SAO PAULO|0000|OP01|COR|QXD3|30")
+qrp=$(value "$out" id=)
+out=$(PIX_CLOCK_NOW=20261006100031 bank "pix.qr.status|$qrp|PAID|OP01|COR|QXS3")
+check "qr.expire.paid-direct.rc" "20" "$(value "$out" rc=)"
+check "qr.expire.paid-direct.msg" "yes" "$(grep -aq '^msg=PIX QR EXPIRED' <<<"$out" && echo yes || echo no)"
+out=$(bank "pix.qr.get|$qrp")
+check "qr.expire.paid-direct.status" "EXPIRED" "$(value "$out" status=)"
+
+# static QR never expires
+out=$(bank "pix.qr.create|STATIC|$qxa2|$qxkey|CPF|23456789092|25.00|PIX MERCHANT|SAO PAULO|0000|OP01|COR|QXS4")
+qrs=$(value "$out" id=)
+check "qr.expire.static.no-ttl" "0000000" "$(value "$out" ttlsec=)"
+out=$(PIX_CLOCK_NOW=20990101000000 bank "pix.qr.check|$qrs|OP01")
+check "qr.expire.static.active" "00" "$(value "$out" rc=)"
+
+# expiration is seconds + UTC instant, independent of business-date
+# (bank.cfg business-date is 2026-10-02 while the QR clock runs 2026-10-06/07)
+out=$(bank "pix.qr.create|DYNAMIC|$qxa2|$qxkey|CPF|23456789092|30.00|PIX MERCHANT|SAO PAULO|0000|OP01|COR|QXDA|3600")
+qrb=$(value "$out" id=)
+out=$(PIX_CLOCK_NOW=20261006105959 bank "pix.qr.check|$qrb|OP01")
+check "qr.expire.bizdate.independent.active" "00" "$(value "$out" rc=)"
+out=$(PIX_CLOCK_NOW=20261006110000 bank "pix.qr.check|$qrb|OP01")
+check "qr.expire.bizdate.independent.expired" "20" "$(value "$out" rc=)"
+
+# day, month, year and leap rollovers
+out=$(PIX_CLOCK_NOW=20261231235900 bank "pix.qr.create|DYNAMIC|$qxa2|$qxkey|CPF|23456789092|10.00|PIX MERCHANT|SAO PAULO|0000|OP01|COR|QXD4|86399")
+check "qr.expire.year.rollover" "20270101235859" "$(value "$out" expiresat=)"
+qry=$(value "$out" id=)
+out=$(PIX_CLOCK_NOW=20270101235858 bank "pix.qr.check|$qry|OP01")
+check "qr.expire.year.last-second" "00" "$(value "$out" rc=)"
+out=$(PIX_CLOCK_NOW=20270101235859 bank "pix.qr.check|$qry|OP01")
+check "qr.expire.year.expired" "20" "$(value "$out" rc=)"
+out=$(PIX_CLOCK_NOW=20280228235900 bank "pix.qr.create|DYNAMIC|$qxa2|$qxkey|CPF|23456789092|10.00|PIX MERCHANT|SAO PAULO|0000|OP01|COR|QXD5|86400")
+check "qr.expire.leap-day" "20280229235900" "$(value "$out" expiresat=)"
+out=$(PIX_CLOCK_NOW=21000228000000 bank "pix.qr.create|DYNAMIC|$qxa2|$qxkey|CPF|23456789092|10.00|PIX MERCHANT|SAO PAULO|0000|OP01|COR|QXD6|86400")
+check "qr.expire.century.no-leap" "21000301000000" "$(value "$out" expiresat=)"
+
+# institution default is one boundary knob; explicit expiration still wins
+sed -i 's/^qr-expiration-default-seconds=.*/qr-expiration-default-seconds=120/' etc/pix.cfg
+out=$(PIX_CLOCK_NOW=20261006100000 bank "pix.qr.create|DYNAMIC|$qxa2|$qxkey|CPF|23456789092|20.00|PIX MERCHANT|SAO PAULO|0000|OP01|COR|QXD7")
+check "qr.expire.cfg.default.ttl" "0000120" "$(value "$out" ttlsec=)"
+check "qr.expire.cfg.default.expiresat" "20261006100200" "$(value "$out" expiresat=)"
+out=$(bank "pix.qr.create|DYNAMIC|$qxa2|$qxkey|CPF|23456789092|20.00|PIX MERCHANT|SAO PAULO|0000|OP01|COR|QXD8|3600")
+check "qr.expire.cfg.explicit-wins" "20261006110000" "$(value "$out" expiresat=)"
+sed -i 's/^qr-expiration-default-seconds=.*/qr-expiration-default-seconds=86400/' etc/pix.cfg
+
+# unknown QR is refused for check and pay with zero side effects
+out=$(PIX_CLOCK_NOW=20261006101500 bank "pix.qr.check|R99999999999|OP01")
+check "qr.expire.check.unknown.rc" "23" "$(value "$out" rc=)"
+out=$(bank "pix.out.qr|R99999999999|30.00|$qxa1||unknown qr|OP01|COR|QXP2")
+check "qr.expire.pay.unknown.rc" "23" "$(value "$out" rc=)"
+unset PIX_CLOCK_NOW
+
+# --- pix-split-prep: multi-destination extension-point guard ---
+reset
+bank "ledger.init" >/dev/null
+bank "pix.rt.create|12345678|KOF|DEBITS|DPI|Y||OP01|CORP|SPE1" >/dev/null
+out=$(bank "customer.create|P|SPLIT PAYER|CPF|123.456.789-09|19900101|OP01|SPE2")
+spc1=$(value "$out" id=)
+out=$(bank "account.open|$spc1|DMND|BRL|500000|OP01|SPE3|A")
+spa1=$(value "$out" id=)
+out=$(bank "customer.create|P|SPLIT PAYEE|CPF|234.567.890-92|19900101|OP01|SPE4")
+spc2=$(value "$out" id=)
+out=$(bank "account.open|$spc2|DMND|BRL|500000|OP01|SPE5|B")
+spa2=$(value "$out" id=)
+out=$(bank "pix.key.register|CPF|234.567.890-92|$spa2|$spc2|OP01|SPE6|K")
+spkey=$(value "$out" id=)
+out=$(bank "pix.out.key|$spkey|100.00|$spa1|||split intent|OP01|COR|SPR1||Y|Y")
+check "split.guard.key.rc" "20" "$(value "$out" rc=)"
+check "split.guard.key.msg" "yes" "$(grep -aq '^msg=SPLIT REQUIRES 1 TO 20 ALLOCATIONS' <<<"$out" && echo yes || echo no)"
+out=$(bank "pix.qr.create|DYNAMIC|$spa2|$spkey|CPF|23456789092|80.00|SPLIT MERCHANT|SAO PAULO|0000|OP01|COR|SPR2")
+spqr=$(value "$out" id=)
+out=$(bank "pix.out.qr|$spqr|80.00|$spa1|||qr split intent|OP01|COR|SPR3||Y|Y")
+check "split.guard.qr.rc" "20" "$(value "$out" rc=)"
+check "split.guard.qr.msg" "yes" "$(grep -aq '^msg=SPLIT REQUIRES 1 TO 20 ALLOCATIONS' <<<"$out" && echo yes || echo no)"
+out=$(bank "ledger.balance|$spa1")
+check "split.guard.no-debit" "500000.00" "$(value "$out" available=)"
+out=$(bank "pix.out.key|$spkey|100.00|$spa1|||single dest|OP01|COR|SPR4||Y")
+check "split.single.ok" "POSTED" "$(value "$out" status=)"
+
+# --- pix-split: multi-destination allocation engine ---
+reset
+bank "ledger.init" >/dev/null
+bank "pix.rt.create|12345678|KOF|DEBITS|DPI|Y||OP01|CORP|SPA0" >/dev/null
+out=$(bank "customer.create|P|SPLIT PAYER|CPF|123.456.789-09|19900101|OP01|SPA1")
+spc1=$(value "$out" id=)
+out=$(bank "account.open|$spc1|DMND|BRL|500000|OP01|SPA2|A")
+spa1=$(value "$out" id=)
+out=$(bank "customer.create|P|SPLIT PAYEE1|CPF|234.567.890-92|19900101|OP01|SPA3")
+spc2=$(value "$out" id=)
+out=$(bank "account.open|$spc2|DMND|BRL|0|OP01|SPA4|B")
+spa2=$(value "$out" id=)
+out=$(bank "customer.create|P|SPLIT PAYEE2|CPF|345.678.901-91|19900101|OP01|SPA5")
+spc3=$(value "$out" id=)
+out=$(bank "account.open|$spc3|DMND|BRL|0|OP01|SPA6|C")
+spa3=$(value "$out" id=)
+
+# structural validation at the payment boundary
+out=$(bank "pix.split.validate|CUSTOMER:$spa2:60.00:MAIN;CUSTOMER:$spa3:40.00:MAIN|100.00|$spa1")
+check "split.valid.rc" "00" "$(value "$out" rc=)"
+check "split.valid.total" "yes" "$(grep -aq '^total=+000000000000100.00' <<<"$out" && echo yes || echo no)"
+out=$(bank "pix.split.validate|CUSTOMER:$spa2:60.00:MAIN;CUSTOMER:$spa3:30.00:MAIN|100.00|$spa1")
+check "split.sum.rc" "20" "$(value "$out" rc=)"
+check "split.sum.msg" "yes" "$(grep -aq '^msg=PIX SPLIT ALLOCATION SUM != GROSS' <<<"$out" && echo yes || echo no)"
+out=$(bank "pix.split.validate|CUSTOMER:$spa2:0.00:MAIN;CUSTOMER:$spa3:100.00:MAIN|100.00|$spa1")
+check "split.zero.rc" "20" "$(value "$out" rc=)"
+check "split.zero.msg" "yes" "$(grep -aq '^msg=ALLOCATION AMOUNT MUST BE POSITIVE' <<<"$out" && echo yes || echo no)"
+out=$(bank "pix.split.validate|CUSTOMER:$spa2:60.00:MAIN;BOGUS:$spa3:40.00:MAIN|100.00|$spa1")
+check "split.role.rc" "20" "$(value "$out" rc=)"
+out=$(bank "pix.split.validate|CUSTOMER:$spa2:60.00:MAIN;CUSTOMER:ZZZZ00000000:40.00:MAIN|100.00|$spa1")
+check "split.dest.rc" "20" "$(value "$out" rc=)"
+out=$(bank "pix.split.validate|CUSTOMER:$spa2:60.00:MAIN;TAX:$spa3:40.00:TAX|100.00|$spa1")
+check "split.taxmeta.rc" "20" "$(value "$out" rc=)"
+check "split.taxmeta.msg" "yes" "$(grep -aq '^msg=TAX ALLOCATION METADATA INCOMPLETE' <<<"$out" && echo yes || echo no)"
+out=$(bank "pix.split.validate|CUSTOMER:$spa2:60.00:MAIN:X:Y:Z;CUSTOMER:$spa3:40.00:MAIN|100.00|$spa1")
+check "split.taxbleed.rc" "20" "$(value "$out" rc=)"
+out=$(bank "pix.split.validate|CUSTOMER:$spa2:60.00:MAIN;PARTICIPANT:P00000000001:40.00:MAIN|100.00|$spa1")
+check "split.participant.rc" "00" "$(value "$out" rc=)"
+
+# full posted split: gross debit once, credits per allocation
+out=$(bank "pix.split.request|CUSTOMER:$spa2:60.00:MAIN;CUSTOMER:$spa3:40.00:MAIN|100.00|$spa1|||posted split|OP01|COR|SPS1||Y")
+check "split.post.rc" "00" "$(value "$out" rc=)"
+check "split.post.status" "POSTED" "$(value "$out" status=)"
+check "split.post.cnt" "02" "$(value "$out" splitcnt=)"
+spid=$(value "$out" id=)
+check "split.post.allocids" "yes" "$(grep -aq 'L000000000' <<<"$out" && echo yes || echo no)"
+out=$(bank "ledger.balance|$spa1")
+check "split.gross.debit" "499900.00" "$(value "$out" available=)"
+out=$(bank "ledger.balance|$spa2")
+check "split.leg1.credit" "60.00" "$(value "$out" available=)"
+out=$(bank "ledger.balance|$spa3")
+check "split.leg2.credit" "40.00" "$(value "$out" available=)"
+out=$(bank "ledger.trial")
+sptd=$(value "$out" total-debit=)
+sptc=$(value "$out" total-credit=)
+check "split.trial.rc" "00" "$(value "$out" rc=)"
+check "split.trial.balanced" "yes" "$([ "$sptd" = "$sptc" ] && echo yes || echo no)"
+
+# allocations durable and marked POSTED (fresh process = restart-safe read)
+out=$(bank "pix.split.show|$spid")
+check "split.show.rc" "00" "$(value "$out" rc=)"
+check "split.show.total" "yes" "$(grep -aq '^total=+000000000000100.00' <<<"$out" && echo yes || echo no)"
+check "split.show.posted1" "yes" "$(grep -aq '^leg 01.*st=POSTED' <<<"$out" && echo yes || echo no)"
+check "split.show.posted2" "yes" "$(grep -aq '^leg 02.*st=POSTED' <<<"$out" && echo yes || echo no)"
+check "split.show.seq" "yes" "$(grep -aq '^leg 01.*seq=01' <<<"$out" && grep -aq '^leg 02.*seq=02' <<<"$out" && echo yes || echo no)"
+
+# idempotency: identical replay re-posts nothing
+out=$(bank "pix.split.request|CUSTOMER:$spa2:60.00:MAIN;CUSTOMER:$spa3:40.00:MAIN|100.00|$spa1|||posted split|OP01|COR|SPS1||Y")
+check "split.replay.rc" "00" "$(value "$out" rc=)"
+check "split.replay.flag" "Y" "$(value "$out" replay=)"
+sptxn=$(value "$out" txn=)
+out=$(bank "ledger.balance|$spa1")
+check "split.replay.noextra" "499900.00" "$(value "$out" available=)"
+
+# same request key, different decomposition: first intent wins (no new posting)
+out=$(bank "pix.split.request|CUSTOMER:$spa2:70.00:MAIN;CUSTOMER:$spa3:30.00:MAIN|100.00|$spa1|||posted split alt|OP01|COR|SPS1||Y")
+check "split.samekey.rc" "00" "$(value "$out" rc=)"
+check "split.samekey.replay" "Y" "$(value "$out" replay=)"
+check "split.samekey.txn-stable" "$sptxn" "$(value "$out" txn=)"
+out=$(bank "pix.split.show|$spid")
+check "split.samekey.legs-intact" "yes" "$(grep -aq '^leg 01.*amt=+000000000000060.00' <<<"$out" && echo yes || echo no)"
+
+# tax allocation leg: explicit metadata, no tax calculation by engine
+out=$(bank "pix.split.request|CUSTOMER:$spa2:55.00:MAIN;TAX:$spa3:45.00:TAX:ISS:GRL:NF-9|100.00|$spa1|||tax split|OP01|COR|SPS3||Y")
+check "split.tax.rc" "00" "$(value "$out" rc=)"
+sptid=$(value "$out" id=)
+out=$(bank "pix.split.show|$sptid")
+check "split.tax.total45" "yes" "$(grep -aq '^taxtotal=+000000000000045.00' <<<"$out" && echo yes || echo no)"
+check "split.tax.posted" "yes" "$(grep -aq '^leg 02.*type=TAX.*st=POSTED' <<<"$out" && echo yes || echo no)"
+
+# participant destination: external leg keeps gross settlement identity
+out=$(bank "pix.rt.create|87654321|EXTB|DEBITS|DPI|N||OP01|CORP|SPS0")
+sppart=$(value "$out" id=)
+out=$(bank "pix.split.request|CUSTOMER:$spa2:60.00:MAIN;PARTICIPANT:$sppart:40.00:MAIN|100.00|$spa1|||ext split|OP01|COR|SPS4||Y")
+check "split.ext.rc" "00" "$(value "$out" rc=)"
+speid=$(value "$out" id=)
+out=$(bank "pix.split.show|$speid")
+check "split.ext.total" "yes" "$(grep -aq '^exttotal=+000000000000040.00' <<<"$out" && echo yes || echo no)"
+
+# single-destination behavior unchanged
+out=$(bank "pix.key.register|CPF|234.567.890-92|$spa2|$spc2|OP01|SPS6|K")
+spkey2=$(value "$out" id=)
+out=$(bank "pix.out.key|$spkey2|100.00|$spa1|||plain|OP01|COR|SPS5||Y")
+check "split.single.unaffected" "no" "$(grep -aq '^msg=PIX SPLIT' <<<"$out" && echo yes || echo no)"
+
+# --- pix-split-reversal: allocation-level devolution ---
+reset
+bank "ledger.init" >/dev/null
+bank "pix.rt.create|12345678|KOF|DEBITS|DPI|Y||OP01|CORP|RVA0" >/dev/null
+out=$(bank "customer.create|P|SPLIT PAYER|CPF|123.456.789-09|19900101|OP01|RVA1")
+rvc1=$(value "$out" id=)
+out=$(bank "account.open|$rvc1|DMND|BRL|500000|OP01|RVA2|A")
+rva1=$(value "$out" id=)
+out=$(bank "customer.create|P|SPLIT PAYEE1|CPF|234.567.890-92|19900101|OP01|RVA3")
+rvc2=$(value "$out" id=)
+out=$(bank "account.open|$rvc2|DMND|BRL|0|OP01|RVA4|B")
+rva2=$(value "$out" id=)
+out=$(bank "customer.create|P|SPLIT PAYEE2|CPF|345.678.901-91|19900101|OP01|RVA5")
+rvc3=$(value "$out" id=)
+out=$(bank "account.open|$rvc3|DMND|BRL|0|OP01|RVA6|C")
+rva3=$(value "$out" id=)
+
+out=$(bank "pix.split.request|CUSTOMER:$rva2:60.00:MAIN;CUSTOMER:$rva3:40.00:MAIN|100.00|$rva1|||posted split|OP01|COR|RVB1||Y")
+check "revsetup.rc" "00" "$(value "$out" rc=)"
+rvid=$(value "$out" id=)
+out=$(bank "pix.split.show|$rvid")
+rvl1=$(grep -a '^leg 01' <<<"$out" | grep -ao 'aid=[A-Z0-9]*' | cut -d= -f2)
+rvl2=$(grep -a '^leg 02' <<<"$out" | grep -ao 'aid=[A-Z0-9]*' | cut -d= -f2)
+check "revsetup.legids" "yes" "$([ -n "$rvl1" ] && [ -n "$rvl2" ] && echo yes || echo no)"
+
+# gross devolution of a split pix is rejected (no implicit full reversal)
+out=$(bank "pix.devol|$rvid|10.00|GROSS ATTEMPT|OP01|COR|RVC1")
+check "rev.gross.rc" "20" "$(value "$out" rc=)"
+check "rev.gross.msg" "yes" "$(grep -aq 'SPLIT PIX REQUIRES EXPLICIT LEG REVERSAL' <<<"$out" && echo yes || echo no)"
+
+# partial leg reversal: 25.00 of leg1 (60.00)
+out=$(bank "pix.split.reverse|$rvid|$rvl1:25.00|RVREQ1")
+check "rev.partial.rc" "00" "$(value "$out" rc=)"
+check "rev.partial.devoid" "yes" "$(grep -a '^devoid=' <<<"$out" | grep -aq 'W' && echo yes || echo no)"
+check "rev.partial.devstatus" "PARTIAL" "$(value "$out" devstatus=)"
+out=$(bank "ledger.balance|$rva1")
+check "rev.partial.payer" "499925.00" "$(value "$out" available=)"
+out=$(bank "ledger.balance|$rva2")
+check "rev.partial.payee1" "35.00" "$(value "$out" available=)"
+out=$(bank "ledger.balance|$rva3")
+check "rev.partial.payee2" "40.00" "$(value "$out" available=)"
+out=$(bank "ledger.trial")
+check "rev.partial.trial" "yes" "$([ "$(value "$out" total-debit=)" = "$(value "$out" total-credit=)" ] && echo yes || echo no)"
+
+# idempotent replay of same request id: no second posting
+out=$(bank "pix.split.reverse|$rvid|$rvl1:25.00|RVREQ1")
+check "rev.replay.rc" "00" "$(value "$out" rc=)"
+check "rev.replay.flag" "Y" "$(value "$out" replay=)"
+out=$(bank "ledger.balance|$rva1")
+check "rev.replay.noeffect" "499925.00" "$(value "$out" available=)"
+
+# over-reversal on remaining is refused (remain=35)
+out=$(bank "pix.split.reverse|$rvid|$rvl1:36.00|RVREQ2")
+check "rev.over.rc" "20" "$(value "$out" rc=)"
+check "rev.over.msg" "yes" "$(grep -aq 'EXCEEDS REMAINING LEG AMOUNT' <<<"$out" && echo yes || echo no)"
+out=$(bank "ledger.balance|$rva1")
+check "rev.over.noeffect" "499925.00" "$(value "$out" available=)"
+
+# remaining legs reversed fully via auto build (full keyword)
+out=$(bank "pix.split.reverse|$rvid|full|RVREQ3")
+check "rev.auto.rc" "00" "$(value "$out" rc=)"
+check "rev.auto.amount" "yes" "$(grep -aq '^amount=+000000000000075.00' <<<"$out" && echo yes || echo no)"
+check "rev.auto.devstatus" "FULL" "$(value "$out" devstatus=)"
+out=$(bank "ledger.balance|$rva1")
+check "rev.auto.payer" "500000.00" "$(value "$out" available=)"
+out=$(bank "ledger.balance|$rva2")
+check "rev.auto.payee1" "0.00" "$(value "$out" available=)"
+out=$(bank "ledger.balance|$rva3")
+check "rev.auto.payee2" "0.00" "$(value "$out" available=)"
+
+# original pix reaches DEVOLVED and remains immutable afterwards
+out=$(bank "pix.get|$rvid")
+check "rev.pix.devolved" "DEVOLVED" "$(value "$out" status=)"
+out=$(bank "pix.split.show|$rvid")
+check "rev.show.remain0" "yes" "$(grep -aq '^remain=+000000000000000.00' <<<"$out" && echo yes || echo no)"
+check "rev.show.devolved100" "yes" "$(grep -aq '^devolved=+000000000000100.00' <<<"$out" && echo yes || echo no)"
+check "rev.show.origintact" "yes" "$(grep -aq '^leg 01.*amt=+000000000000060.00' <<<"$out" && grep -aq '^leg 02.*amt=+000000000000040.00' <<<"$out" && echo yes || echo no)"
+check "rev.show.remainleg" "yes" "$(grep -aq '^leg 01.*remain=+000000000000000.00' <<<"$out" && echo yes || echo no)"
+
+# further reversal attempts refused on a fully devolved pix
+out=$(bank "pix.split.reverse|$rvid|$rvl2:10.00|RVREQ4")
+check "rev.afterfull.rc" "20" "$(value "$out" rc=)"
+
+# reversal headers are durable and listable in a fresh process
+out=$(bank "pix.split.reversals|$rvid")
+check "rev.list.rc" "00" "$(value "$out" rc=)"
+check "rev.list.cnt" "02" "$(value "$out" cnt=)"
+check "rev.list.posted" "yes" "$(grep -ac 'st=POSTED' <<<"$out" | grep -aq '^2$' && echo yes || echo no)"
+out=$(bank "ledger.trial")
+check "rev.final.trial" "yes" "$([ "$(value "$out" total-debit=)" = "$(value "$out" total-credit=)" ] && echo yes || echo no)"
+
+# tax split reversal: metadata is preserved on reversal legs
+out=$(bank "pix.split.request|CUSTOMER:$rva2:55.00:MAIN;TAX:$rva3:45.00:TAX:ISS:GRL:NF-9|100.00|$rva1|||tax split|OP01|COR|RVB2||Y")
+check "rev.taxsetup.rc" "00" "$(value "$out" rc=)"
+rvtid=$(value "$out" id=)
+out=$(bank "pix.split.show|$rvtid")
+rvtax=$(grep -a '^leg 02' <<<"$out" | grep -ao 'aid=[A-Z0-9]*' | cut -d= -f2)
+out=$(bank "pix.split.reverse|$rvtid|$rvtax:45.00|RVREQ5")
+check "rev.tax.rc" "00" "$(value "$out" rc=)"
+out=$(bank "pix.split.show|$rvtid")
+check "rev.tax.taxtotal" "yes" "$(grep -aq '^taxtotal=+000000000000045.00' <<<"$out" && echo yes || echo no)"
+check "rev.tax.remain" "yes" "$(grep -aq '^remain=+000000000000055.00' <<<"$out" && echo yes || echo no)"
+out=$(bank "ledger.balance|$rva3")
+check "rev.tax.payeebalance" "0.00" "$(value "$out" available=)"
+out=$(bank "ledger.trial")
+check "rev.tax.trial" "yes" "$([ "$(value "$out" total-debit=)" = "$(value "$out" total-credit=)" ] && echo yes || echo no)"
+
+# participant split + settlement netting after leg reversal
+out=$(bank "pix.rt.create|87654321|EXTC|DEBITS|DPI|N||OP01|CORP|RVC0")
+rvpart=$(value "$out" id=)
+out=$(bank "pix.split.request|CUSTOMER:$rva2:60.00:MAIN;PARTICIPANT:$rvpart:40.00:MAIN|100.00|$rva1|||ext split rv|OP01|COR|RVC1||Y")
+check "rev.ext.rc" "00" "$(value "$out" rc=)"
+rvxid=$(value "$out" id=)
+out=$(bank "pix.split.show|$rvxid")
+rvx2=$(grep -a '^leg 02' <<<"$out" | grep -ao 'aid=[A-Z0-9]*' | cut -d= -f2)
+out=$(bank "pix.split.reverse|$rvxid|$rvx2:30.00|RVCREQ1")
+check "rev.ext.rev.rc" "00" "$(value "$out" rc=)"
+out=$(bank "pix.cycle.open|20261002|BRL|||||OP01|COR|RVC2")
+check "rev.cycle.open" "00" "$(value "$out" rc=)"
+rvcyc=$(value "$out" cycle=)
+out=$(bank "pix.cycle.accrue|20261002|BRL|||||OP01|COR|RVC3")
+check "rev.cycle.accrue.rc" "00" "$(value "$out" rc=)"
+check "rev.cycle.netpay" "yes" "$(grep -aq '^grosspay=' <<<"$out" && echo yes || echo no)"
+out=$(bank "pix.cycle.close|$rvcyc|||||OP01|COR|RVC4")
+check "rev.cycle.close" "CLOSED" "$(value "$out" status=)"
+out=$(bank "pix.cycle.calc|$rvcyc|||||OP01|COR|RVC5")
+check "rev.cycle.calc.rc" "00" "$(value "$out" rc=)"
+# participant obligation nets the reversed 30.00 (and the earlier internal
+# splits' participant legs): payable reduced vs gross accrued
+check "rev.cycle.nettable" "yes" "$([ -n "$(value "$out" grosspay=)" ] && echo yes || echo no)"
+
+# MED full lifecycle on a split payment: hold, decide, leg-level devolution
+out=$(bank "pix.split.request|CUSTOMER:$rva2:60.00:MAIN;CUSTOMER:$rva3:40.00:MAIN|100.00|$rva1|||med split|OP01|COR|RVM1||Y")
+check "rev.med.setup" "00" "$(value "$out" rc=)"
+rvmed=$(value "$out" id=)
+out=$(bank "pix.med.open|$rvmed|100.00|BRL|$rvc2|PAYEE|FRAUDE|Y|OP01|OPM|RVM2")
+check "rev.med.open" "00" "$(value "$out" rc=)"
+rvcase=$(value "$out" medcase=)
+out=$(bank "pix.med.block|$rvcase|OPM|RVM3")
+check "rev.med.block.rc" "00" "$(value "$out" rc=)"
+check "rev.med.block.hold" "60.00" "$(value "$out" blocked=)"
+out=$(bank "pix.med.decide|$rvcase|APPROVE||fundamentado|OPM|RVM4")
+check "rev.med.decide" "00" "$(value "$out" rc=)"
+out=$(bank "pix.med.execute|$rvcase||OPM|RVM5")
+check "rev.med.exec.rc" "00" "$(value "$out" rc=)"
+rvmdev=$(value "$out" devol=)
+check "rev.med.devoid" "yes" "$(grep -aq '^devol=W' <<<"$out" && echo yes || echo no)"
+out=$(bank "pix.med.execute|$rvcase||OPM|RVM6")
+check "rev.med.replay" "DEVOLVED" "$(value "$out" status=)"
+check "rev.med.replayflag" "Y" "$(value "$out" replay=)"
+out=$(bank "pix.split.show|$rvmed")
+check "rev.med.remain" "yes" "$(grep -aq '^devolved=+000000000000060.00' <<<"$out" && echo yes || echo no)"
+out=$(bank "pix.get|$rvmed")
+check "rev.med.devstatus" "PARTIAL" "$(value "$out" dev=)"
+out=$(bank "pix.devol.get|$rvmdev")
+check "rev.med.devolget" "00" "$(value "$out" rc=)"
+out=$(bank "pix.split.show|$rvmed")
+rvm2=$(grep -a '^leg 02' <<<"$out" | grep -ao 'aid=[A-Z0-9]*' | cut -d= -f2)
+out=$(bank "pix.split.reverse|$rvmed|$rvm2:40.00|RVM7")
+check "rev.med.rest.rc" "00" "$(value "$out" rc=)"
+check "rev.med.rest.dev" "FULL" "$(value "$out" devstatus=)"
+out=$(bank "pix.get|$rvmed")
+check "rev.med.rest.status" "DEVOLVED" "$(value "$out" status=)"
+out=$(bank "ledger.trial")
+check "rev.med.trial" "yes" "$([ "$(value "$out" total-debit=)" = "$(value "$out" total-credit=)" ] && echo yes || echo no)"
+
+# --- pix-doc-cnpj: alphanumeric CNPJ identity regressions ---
+reset
+bank "ledger.init" >/dev/null
+bank "pix.rt.create|12345678|KOF|DEBITS|DPI|Y||OP01|CORP|DCE1" >/dev/null
+out=$(bank "customer.create|J|LEGACY ACME|CNPJ|33.000.167/0001-01|20000101|OP01|DCE2")
+check "cnpj.legacy.customer" "00" "$(value "$out" rc=)"
+dcc1=$(value "$out" id=)
+out=$(bank "customer.create|J|LEGACY ACME ALT|CNPJ|33000167000101|20000101|OP01|DCE3")
+check "cnpj.legacy.canon-dedup" "22" "$(value "$out" rc=)"
+out=$(bank "customer.create|P|FORMATTED CPF|CPF|123.456.789-09|19900101|OP01|DCE4")
+check "cnpj.cpf.formatted" "00" "$(value "$out" rc=)"
+dcpc=$(value "$out" id=)
+out=$(bank "customer.create|P|RAW CPF|CPF|12345678909|19900101|OP01|DCE5")
+check "cnpj.cpf.canon-dedup" "22" "$(value "$out" rc=)"
+out=$(bank "account.open|$dcc1|DMND|BRL|500000|OP01|DCE6|A")
+dca1=$(value "$out" id=)
+out=$(bank "pix.key.register|CNPJ|33000167000101|$dca1|$dcc1|OP01|DCE7|K")
+check "cnpj.key.legacy.rc" "00" "$(value "$out" rc=)"
+check "cnpj.key.legacy.verified" "VERIFIED" "$(value "$out" verified=)"
+out=$(bank "pix.key.lookup|CNPJ|33.000.167/0001-01")
+check "cnpj.key.lookup-cross-format" "00" "$(value "$out" rc=)"
+out=$(bank "pix.key.register|CNPJ|33000167000100|$dca1|$dcc1|OP01|DCE8|K")
+check "cnpj.key.bad-dv" "20" "$(value "$out" rc=)"
+check "cnpj.key.bad-dv.msg" "yes" "$(grep -aq '^msg=INVALID CNPJ CHECK DIGIT' <<<"$out" && echo yes || echo no)"
+out=$(bank "pix.key.register|CNPJ|11111111111111|$dca1|$dcc1|OP01|DCE9|K")
+check "cnpj.key.repeated" "20" "$(value "$out" rc=)"
+out=$(bank "customer.create|J|ALPHA CORP|CNPJ|AB1C2D3E4F5G13|20260801|OP01|DCF1")
+check "cnpj.alnum.customer" "00" "$(value "$out" rc=)"
+dcc2=$(value "$out" id=)
+out=$(bank "customer.create|J|ALPHA CORP DUP|CNPJ|ab1c2d3e4f5g13|20260801|OP01|DCF2")
+check "cnpj.alnum.canon-dedup" "22" "$(value "$out" rc=)"
+out=$(bank "account.open|$dcc2|DMND|BRL|500000|OP01|DCF3|B")
+dca2=$(value "$out" id=)
+out=$(bank "pix.key.register|CNPJ|ab.1c2d3e4f5g13|$dca2|$dcc2|OP01|DCF4|K")
+check "cnpj.alnum.key.rc" "00" "$(value "$out" rc=)"
+check "cnpj.alnum.key.verified" "VERIFIED" "$(value "$out" verified=)"
+alnumkey=$(value "$out" id=)
+mask=$(grep '^mask=' <<<"$out" | head -1 | sed 's/^mask= *//')
+case "$mask" in
+    *AB1C*|*ab1c**) leak=yes ;;
+    *) leak=no ;;
+esac
+check "cnpj.alnum.key.masked" "no" "$leak"
+out=$(bank "pix.key.lookup|CNPJ|AB1C2D3E4F5G13")
+check "cnpj.alnum.lookup" "00" "$(value "$out" rc=)"
+out=$(bank "pix.key.lookup|CNPJ|AB1C2D3E4F5G13I")
+check "cnpj.alnum.lookup.wrong-len" "20" "$(value "$out" rc=)"
+out=$(bank "pix.key.register|CNPJ|AB1C2D3E4F5G1_|$dca2|$dcc2|OP01|DCF5|K")
+check "cnpj.badchar" "20" "$(value "$out" rc=)"
+check "cnpj.badchar.msg" "yes" "$(grep -aq '^msg=INVALID DOCUMENT CHARACTERS' <<<"$out" && echo yes || echo no)"
+out=$(bank "pix.qr.create|DYNAMIC|$dca2|$alnumkey|CNPJ|AB1C2D3E4F5G13|10.00|ALPHA CORP|SAO PAULO|0000|OP01|DCF6|Q")
+check "cnpj.qr.rc" "00" "$(value "$out" rc=)"
+check "cnpj.qr.payload-key" "yes" "$(grep -F "AB1C2D3E4F5G13" <<<"$out" >/dev/null && echo yes || echo no)"
+out=$(bank "pix.key.delete|$alnumkey|OP01|DCF7|K")
+check "cnpj.alnum.delete" "REVOKED" "$(value "$out" status=)"
+
+# --- pix-doc-cnpj-alphanumeric: official RFB alphanumeric DV ---
+reset
+bank "ledger.init" >/dev/null
+bank "pix.rt.create|12345678|KOF|DEBITS|DPI|Y||OP01|CORP|ALA0" >/dev/null
+out=$(bank "customer.create|J|OFFICIAL ORG|CNPJ|12ABC34501DE35|20260801|OP01|ALA1")
+c1=$(value "$out" id=)
+out=$(bank "account.open|$c1|DMND|BRL|500000|OP01|ALA2|A")
+a1=$(value "$out" id=)
+out=$(bank "customer.create|J|MIXED CORP|CNPJ|1A2B3C4D5E6F34|20260801|OP01|ALA3")
+c2=$(value "$out" id=)
+out=$(bank "account.open|$c2|DMND|BRL|0|OP01|ALA4|B")
+a2=$(value "$out" id=)
+out=$(bank "customer.create|J|TAX CORP|CNPJ|ABCDEFGHIJKL80|20260801|OP01|ALA5")
+c3=$(value "$out" id=)
+out=$(bank "account.open|$c3|DMND|BRL|0|OP01|ALA6|C")
+a3=$(value "$out" id=)
+out=$(bank "customer.create|J|LOWER CORP|CNPJ|11ABCDEF234590|20260801|OP01|ALA7")
+c4=$(value "$out" id=)
+out=$(bank "account.open|$c4|DMND|BRL|0|OP01|ALA8|D")
+a4=$(value "$out" id=)
+out=$(bank "customer.create|J|FIFTH CORP|CNPJ|0A1B2C3D4E5F23|20260801|OP01|ALA9")
+c5=$(value "$out" id=)
+out=$(bank "account.open|$c5|DMND|BRL|0|OP01|ALB0|E")
+a5=$(value "$out" id=)
+
+# official example from the RFB technical note, formatted input
+out=$(bank "pix.key.register|CNPJ|12.ABC.345/01DE-35|$a1|$c1|OP01|ALB1|K")
+check "alnum.official.register" "00" "$(value "$out" rc=)"
+check "alnum.official.verified" "VERIFIED" "$(value "$out" verified=)"
+alcan=$(value "$out" id=)
+out=$(bank "pix.key.lookup|CNPJ|12ABC34501DE35")
+check "alnum.canon.cross" "00" "$(value "$out" rc=)"
+check "alnum.canon.cross.id" "$alcan" "$(value "$out" id=)"
+out=$(bank "pix.key.delete|$alcan")
+check "alnum.official.delete" "00" "$(value "$out" rc=)"
+out=$(bank "pix.key.lookup|CNPJ|12ABC34501DE35")
+check "alnum.absence.rc" "23" "$(value "$out" rc=)"
+
+# DV failures refused even for structurally-valid alphanumeric strings
+out=$(bank "pix.key.register|CNPJ|12ABC34501DE34|$a1|$c1|OP01|ALB2|K")
+check "alnum.dv2.bad" "20" "$(value "$out" rc=)"
+check "alnum.dv2.msg" "yes" "$(grep -aq '^msg=INVALID CNPJ CHECK DIGIT' <<<"$out" && echo yes || echo no)"
+out=$(bank "pix.key.register|CNPJ|12ABC34501DE95|$a1|$c1|OP01|ALB3|K")
+check "alnum.dv1.bad" "20" "$(value "$out" rc=)"
+out=$(bank "pix.key.register|CNPJ|12BBC34501DE35|$a1|$c1|OP01|ALB4|K")
+check "alnum.base-mutate.rejected" "20" "$(value "$out" rc=)"
+
+# lowercase + separators canonicalize before DV
+out=$(bank "pix.key.register|CNPJ|11.abc.def/2345-90|$a4|$c4|OP01|ALB5|K")
+check "alnum.lowercase" "00" "$(value "$out" rc=)"
+check "alnum.lowercase.verified" "VERIFIED" "$(value "$out" verified=)"
+
+# mixed and all-letter bases verify; customer dedup across formats
+out=$(bank "pix.key.register|CNPJ|ab.1c2d3e4f5g13|$a2|$c2|OP01|ALB6|K")
+check "alnum.mixed.register" "00" "$(value "$out" rc=)"
+check "alnum.mixed.verified" "VERIFIED" "$(value "$out" verified=)"
+out=$(bank "pix.key.lookup|CNPJ|1A2B3C4D5E6F34")
+check "alnum.mixed.lookup" "20" "$(value "$out" rc=)"
+check "alnum.mixed.lookup.msg" "yes" "$(grep -aq 'PIX KEY NOT REGISTERED IN DICT' <<<"$out" && echo yes || echo no)"
+out=$(bank "customer.create|J|ALL LETTERS DUP|CNPJ|abcdefghijk l80|20260801|OP01|ALB7")
+check "alnum.allalpha.customer-dedup" "22" "$(value "$out" rc=)"
+out=$(bank "customer.create|J|ALL SAME|CNPJ|AAAAAAAAAAAAAA|20260801|OP01|ALB8")
+check "alnum.all-same.customer" "00" "$(value "$out" rc=)"
+out=$(bank "pix.key.register|CNPJ|AAAAAAAAAAAAAA|$a3|$c3|OP01|ALB9|K")
+check "alnum.all-same.rejected" "20" "$(value "$out" rc=)"
+check "alnum.all-same.msg" "yes" "$(grep -aq 'INVALID REPEATED' <<<"$out" && echo yes || echo no)"
+
+# structure boundary
+out=$(bank "pix.key.register|CNPJ|12ABC34501DE3|$a1|$c1|OP01|ALC0|K")
+check "alnum.short" "20" "$(value "$out" rc=)"
+out=$(bank "pix.key.register|CNPJ|12ABC34501DE355|$a1|$c1|OP01|ALC1|K")
+check "alnum.long" "20" "$(value "$out" rc=)"
+out=$(bank "pix.key.register|CNPJ|12ABC34501DEAB|$a1|$c1|OP01|ALC2|K")
+check "alnum.letter-dv" "20" "$(value "$out" rc=)"
+check "alnum.letter-dv.msg" "yes" "$(grep -aq 'DV POSITIONS MUST BE NUMERIC' <<<"$out" && echo yes || echo no)"
+out=$(bank "pix.key.register|CNPJ|12ABC!4501DE35|$a1|$c1|OP01|ALC3|K")
+check "alnum.punct" "20" "$(value "$out" rc=)"
+
+# legacy numeric regression through the unified routine
+out=$(bank "customer.create|J|LEGACY REG|CNPJ|33000167000101|20260801|OP01|ALC3B")
+cleg=$(value "$out" id=)
+out=$(bank "account.open|$cleg|DMND|BRL|0|OP01|ALC3C|L")
+aleg=$(value "$out" id=)
+out=$(bank "pix.key.register|CNPJ|33.000.167/0001-01|$aleg|$cleg|OP01|ALC4|K")
+check "alnum.legacy-key" "00" "$(value "$out" rc=)"
+check "alnum.legacy.verified" "VERIFIED" "$(value "$out" verified=)"
+out=$(bank "pix.key.register|CNPJ|33000167000100|$a5|$c2|OP01|ALC5|K")
+check "alnum.legacy.bad-dv" "20" "$(value "$out" rc=)"
+
+# split allocation + tax metadata carry the verified alphanumeric CNPJ
+out=$(bank "pix.split.request|CUSTOMER:$a2:50.00:MAIN;TAX:$a3:50.00:TAX:ISS:GRL:12ABC34501DE35|100.00|$a1|||alnum tax split|OP01|COR|ALC6||Y")
+check "alnum.split.rc" "00" "$(value "$out" rc=)"
+alnsx=$(value "$out" id=)
+out=$(bank "pix.split.show|$alnsx")
+check "alnum.split.taxtype" "yes" "$(grep -aq '^leg 02: .*type=TAX' <<<"$out" && echo yes || echo no)"
+check "alnum.split.taxtotal" "yes" "$(grep -aq '^taxtotal=+000000000000050.00' <<<"$out" && echo yes || echo no)"
+alnl2=$(grep -a '^leg 02' <<<"$out" | grep -ao 'aid=[A-Z0-9]*' | cut -d= -f2)
+out=$(bank "pix.split.reverse|$alnsx|$alnl2:50.00|ALREQ1")
+check "alnum.reverse.rc" "00" "$(value "$out" rc=)"
+out=$(bank "pix.split.show|$alnsx")
+check "alnum.reverse.remain" "yes" "$(grep -aq '^leg 02.*remain=+000000000000000.00' <<<"$out" && echo yes || echo no)"
+check "alnum.reverse.paid" "+000000000000050.00" "$(value "$out" devolved=)"
+out=$(bank "ledger.trial")
+check "alnum.reverse.trial" "yes" "$([ "$(value "$out" total-debit=)" = "$(value "$out" total-credit=)" ] && echo yes || echo no)"
+
+# masking convention: canonical CNPJ not leaked in key mask
+out=$(bank "pix.key.lookup|CNPJ|ab1c2d3e4f5g13")
+leak=$(grep -a "mask=" <<<"$out" | grep -ac "AB1C2D3E4F5G13" || true)
+check "alnum.mask.no-leak" "0" "$leak"
+
+
 sed -i 's/business-date=.*/business-date=2026-10-02/' etc/bank.cfg
 
 
 cp "$CFG_BAK" etc/bank.cfg
+
+
+# ====================================================================
+# pix-split-tax-spi: official SPI Split Tax contract boundary
+# (pacs.008 / pain.013 / camt.054 / pacs.002 / pain.014 semantics)
+# ====================================================================
+reset
+bank "ledger.init" >/dev/null
+out=$(bank "customer.create|J|SPI PAYER|CNPJ|33000167000101|20261007|OP01|STXA")
+sxc1=$(value "$out" id=)
+out=$(bank "account.open|$sxc1|DMND|BRL|500.00|OP01|STXB|SRV1")
+sxa1=$(value "$out" id=)
+out=$(bank "customer.create|J|SPI RECEIVER|CNPJ|12.ABC.345/01DE-35|20261007|OP01|STXC")
+sxc2=$(value "$out" id=)
+out=$(bank "account.open|$sxc2|DMND|BRL|0|OP01|STXD|SRV2")
+sxa2=$(value "$out" id=)
+out=$(bank "customer.create|J|SPI TREASURY|CNPJ|11222333000181|20261007|OP01|STXE")
+sxc3=$(value "$out" id=)
+out=$(bank "account.open|$sxc3|DMND|BRL|0|OP01|STXF|SRV3")
+sxa3=$(value "$out" id=)
+out=$(bank "account.open|$sxc3|DMND|BRL|0|OP01|STXG|SRV4")
+sxa4=$(value "$out" id=)
+out=$(bank "pix.rt.create|12345678|KOF PIX SERVICOS|DEBITS|DPI|Y||OP01|STXH|PRT1")
+check "spi.participant" "ACTIVE" "$(value "$out" status=)"
+
+out=$(bank "pix.spi.tax.validate|5.13|pacs.008|E12345678202610071500abcdefghijk|100.00|MANU|33000167000101|12ABC34501DE35|||1234567890|CBSSPLIT:INF:50.00:BRL;IBSSPLIT:INF:30.00:BRL")
+check "spi.validate.rc" "00" "$(value "$out" rc=)"
+check "spi.validate.status" "ACCEPTED" "$(value "$out" status=)"
+check "spi.validate.msgnm" "pacs.008.spi.1.16" "$(value "$out" msgnm=)"
+check "spi.validate.sum" "+000000000000080.00" "$(value "$out" taxsum=)"
+
+out=$(bank "pix.spi.tax.validate|5.12|pacs.008|E12345678202610071500abcdefghik0|100.00|MANU|33000167000101|12ABC34501DE35|||1234567890|CBSSPLIT:INF:50.00:BRL;IBSSPLIT:INF:30.00:BRL")
+check "spi.validate.512" "pacs.008.spi.1.15" "$(value "$out" msgnm=)"
+
+out=$(bank "pix.spi.tax.validate|5.13|pacs.008|E12345678202610071500abcdefghik1|100.0|MANU|33000167000101|12ABC34501DE35|||1234567890|CBSSPLIT:INF:50.00:BRL;IBSSPLIT:INF:30.00:BRL")
+check "spi.syntax.rc" "20" "$(value "$out" rc=)"
+check "spi.syntax.flag" "Y" "$(value "$out" syntax=)"
+check "spi.syntax.status" "RJCT" "$(value "$out" status=)"
+
+out=$(bank "pix.spi.tax.validate|5.13|pacs.008|E12345678202610071500abcdefghik2|100.00|MANU|33000167000101|12ABC34501DE35|||1234567890|CBSSPLIT:INF:50.00:BRL;OTHERTAX:INF:30.00:BRL")
+check "spi.tp.enum" "RR06" "$(value "$out" code=)"
+out=$(bank "pix.spi.tax.validate|5.13|pacs.008|E12345678202610071500abcdefghik3|100.00|MANU|33000167000101|12ABC34501DE35|||1234567890|CBSSPLIT:INF:50.00:BRL")
+check "spi.pair.required" "RR06" "$(value "$out" code=)"
+out=$(bank "pix.spi.tax.validate|5.13|pacs.008|E12345678202610071500abcdefghik4|100.00|MANU|33000167000101|12ABC34501DE35|||1234567890|CBSSPLIT:COR:50.00:BRL;IBSSPLIT:INF:30.00:BRL")
+check "spi.camt.cats.inf" "RR06" "$(value "$out" code=)"
+
+out=$(bank "pix.spi.tax.validate|5.13|pacs.008|E12345678202610071500abcdefghik5|100.00|MANU|12345678901|12ABC34501DE35|||1234567890|CBSSPLIT:INF:50.00:BRL;IBSSPLIT:INF:30.00:BRL")
+check "spi.pj.gate" "RR06" "$(value "$out" code=)"
+out=$(bank "pix.spi.tax.validate|5.13|pacs.008|E12345678202610071500abcdefghik6|100.00|QRDN|33000167000101|12ABC34501DE35|||1234567890|CBSSPLIT:INF:50.00:BRL;IBSSPLIT:INF:30.00:BRL")
+check "spi.initform.forbidden" "RR06" "$(value "$out" code=)"
+
+out=$(bank "pix.spi.tax.validate|5.13|pacs.008|E12345678202610071500abcdefghik7|100.00|MANU|33000167000101|12ABC34501DE35|||1234567890|CBSSPLIT:INF:80.00:BRL;IBSSPLIT:INF:30.00:BRL")
+check "spi.am23" "AM23" "$(value "$out" code=)"
+check "spi.am23.codesrc" "SPI" "$(value "$out" codesrc=)"
+
+IN="pix.spi.tax.ingest|5.13|pacs.008|E12345678202610071500abcdefghik8|100.00|MANU|33000167000101|12ABC34501DE35|||1234567890|CBSSPLIT:INF:50.00:BRL;IBSSPLIT:INF:30.00:BRL|$sxa1|$sxc1|$sxa2,$sxc2,,,$sxa3,$sxc3,$sxa4,$sxc3,OP01,STXREQ1"
+out=$(bank "$IN")
+check "spi.ingest.rc" "00" "$(value "$out" rc=)"
+check "spi.ingest.status" "POSTED" "$(value "$out" status=)"
+check "spi.ingest.msgnm" "pacs.008.spi.1.16" "$(value "$out" msgnm=)"
+spix=$(value "$out" pix=)
+check "spi.ingest.haspix" "yes" "$([ -n "$spix" ] && echo yes || echo no)"
+out=$(bank "ledger.balance|$sxa1")
+check "spi.ingest.payer" "400.00" "$(value "$out" ledger=)"
+out=$(bank "ledger.balance|$sxa2")
+check "spi.ingest.receiver" "20.00" "$(value "$out" ledger=)"
+out=$(bank "ledger.balance|$sxa3")
+check "spi.ingest.cbs" "50.00" "$(value "$out" ledger=)"
+out=$(bank "ledger.balance|$sxa4")
+check "spi.ingest.ibs" "30.00" "$(value "$out" ledger=)"
+out=$(bank "pix.split.show|$spix")
+check "spi.ingest.taxtotal" "yes" "$(grep -aq '^taxtotal=+000000000000080.00' <<<"$out" && echo yes || echo no)"
+check "spi.ingest.role" "yes" "$(grep -aq '^leg 02: seq=02 role=TAX' <<<"$out" && echo yes || echo no)"
+
+out=$(bank "$IN")
+check "spi.replay.rc" "00" "$(value "$out" rc=)"
+check "spi.replay.flag" "Y" "$(value "$out" replay=)"
+check "spi.replay.pix" "$spix" "$(value "$out" pix=)"
+
+out=$(bank "pix.spi.tax.get|E12345678202610071500abcdefghik8")
+check "spi.get.rc" "00" "$(value "$out" rc=)"
+check "spi.get.status" "POSTED" "$(value "$out" status=)"
+check "spi.get.envtax" "yes" "$(grep -aq 'rec{CBSSPLIT,INF,BRL,50.00}; rec{IBSSPLIT,INF,BRL,30.00};' <<<"$out" && echo yes || echo no)"
+check "spi.get.envref" "yes" "$(grep -aq 'ref=1234567890' <<<"$out" && echo yes || echo no)"
+check "spi.get.pix" "$spix" "$(value "$out" pix=)"
+out=$(bank "pix.spi.tax.list")
+check "spi.list.rc" "00" "$(value "$out" rc=)"
+check "spi.list.count" "001" "$(value "$out" count=)"
+
+out=$(bank "pix.spi.tax.map|5.13|$spix|E12345678202610071500abcdefghik8|33000167000101|12ABC34501DE35")
+check "spi.map.rc" "00" "$(value "$out" rc=)"
+check "spi.map.sum" "+000000000000080.00" "$(value "$out" taxsum=)"
+check "spi.map.env" "yes" "$(grep -aq 'amt=100.00' <<<"$out" && echo yes || echo no)"
+
+out=$(bank "pix.spi.tax.ingest|5.13|pacs.008|E12345678202610071500abcdefghik9|100.00|MANU|33000167000101|12ABC34501DE35|||1234567890|CBSSPLIT:INF:80.00:BRL;IBSSPLIT:INF:30.00:BRL|$sxa1|$sxc1|$sxa2,$sxc2,,,$sxa3,$sxc3,$sxa4,$sxc3,OP01,STXREQ2")
+check "spi.reject.rc" "20" "$(value "$out" rc=)"
+check "spi.reject.code" "AM23" "$(value "$out" code=)"
+check "spi.reject.status" "REJECTED" "$(value "$out" status=)"
+out=$(bank "pix.spi.tax.get|E12345678202610071500abcdefghik9")
+check "spi.reject.persist" "REJECTED" "$(value "$out" status=)"
+
+out=$(bank "pix.spi.tax.ingest|5.13|pain.013|E12345678202610071500abcdefghka0|80.00||||33000167000101|||CBSSPLIT:COR:20.00:BRL;CBSSPLIT:INF:50.00:BRL;IBSSPLIT:INF:30.00:BRL")
+check "spi.pain.rc" "00" "$(value "$out" rc=)"
+check "spi.pain.status" "NOTIF" "$(value "$out" status=)"
+check "spi.pain.sum" "+000000000000050.00" "$(value "$out" taxsum=)"
+out=$(bank "pix.spi.tax.validate|5.13|pain.013|E12345678202610071500abcdefghka1|80.00||||33000167000101|||CBSSPLIT:COR:20.00:BRL;IBSSPLIT:INF:30.00:BRL")
+check "spi.pain.pair" "RR06" "$(value "$out" code=)"
+out=$(bank "pix.spi.tax.validate|5.13|pain.013|E12345678202610071500abcdefghka2|30.00||||33000167000101|||CBSSPLIT:COR:20.00:BRL;CBSSPLIT:INF:50.00:BRL;IBSSPLIT:INF:30.00:BRL")
+check "spi.pain.am23" "AM23" "$(value "$out" code=)"
+
+out=$(bank "pix.spi.tax.ingest|5.13|camt.054|E12345678202610071500abcdefghka3|100.00||||||REFX|CBSSPLIT:INF:50.00:BRL;IBSSPLIT:INF:30.00:BRL")
+check "spi.camt.rc" "00" "$(value "$out" rc=)"
+check "spi.camt.status" "NOTIF" "$(value "$out" status=)"
+check "spi.camt.pix" "yes" "$([ -z "$(value "$out" pix=)" ] && echo yes || echo no)"
+out=$(bank "ledger.balance|$sxa1")
+check "spi.camt.nopost" "400.00" "$(value "$out" ledger=)"
+
+out=$(bank "pix.spi.tax.response|pacs.002|5.13|E12345678202610071500abcdefghik8|ACSC")
+check "spi.resp.acsc" "00" "$(value "$out" rc=)"
+out=$(bank "pix.spi.tax.response|pacs.002|5.13|E12345678202610071500abcdefghik8|RJCT|RR06")
+check "spi.resp.rr06" "00" "$(value "$out" rc=)"
+out=$(bank "pix.spi.tax.response|pacs.002|5.13|E12345678202610071500abcdefghik8|RJCT|AM23")
+check "spi.resp.am23" "00" "$(value "$out" rc=)"
+out=$(bank "pix.spi.tax.response|pacs.002|5.13|E12345678202610071500abcdefghik8|RJCT|ZZ99")
+check "spi.resp.domain" "20" "$(value "$out" rc=)"
+
+out=$(bank "pix.spi.tax.response|pain.014|5.12|E12345678202610071500abcdefghik8|RJCT|RR06")
+check "spi.pain014.512" "00" "$(value "$out" rc=)"
+out=$(bank "pix.spi.tax.response|pain.014|5.13|E12345678202610071500abcdefghik8|RJCT|RR06")
+check "spi.pain014.513" "20" "$(value "$out" rc=)"
+check "spi.pain014.513.msg" "yes" "$(grep -aq 'HAS NO TAX ERROR CODE' <<<"$out" && echo yes || echo no)"
+
+l2=$(grep -a '^leg 02' <<<"$(bank "pix.split.show|$spix")" | grep -ao 'aid=[A-Z0-9]*' | cut -d= -f2)
+out=$(bank "pix.split.reverse|$spix|$l2:50.00|STXREV1")
+check "spi.reverse.rc" "00" "$(value "$out" rc=)"
+out=$(bank "pix.split.show|$spix")
+check "spi.reverse.remain" "yes" "$(grep -aq '^leg 02.*remain=+000000000000000.00' <<<"$out" && echo yes || echo no)"
+out=$(bank "ledger.trial")
+check "spi.reverse.trial" "yes" "$([ "$(value "$out" total-debit=)" = "$(value "$out" total-credit=)" ] && echo yes || echo no)"
+
+out=$(bank "pix.spi.tax.validate||pacs.008|E12345678202610071500abcdefghka4|100.00|MANU|33000167000101|12ABC34501DE35|||1234567890|CBSSPLIT:INF:50.00:BRL;IBSSPLIT:INF:30.00:BRL")
+check "spi.cfg.default" "5.13" "$(value "$out" ver=)"
+check "spi.cfg.msgnm" "pacs.008.spi.1.16" "$(value "$out" msgnm=)"
+
+
+
+# ===== GATE 2: FINANCIAL INTEGRITY =====
+
+reset
+bank "ledger.init" >/dev/null
+bank "customer.create|P|FIN A|CPF|11111111111|19900101|OP01|FC1" >/dev/null
+bank "customer.create|P|FIN B|CPF|22222222222|19900102|OP01|FC2" >/dev/null
+bank "account.open|C00000000001|DMND|BRL|100000|OP01|FC3|FA1" >/dev/null
+bank "account.open|C00000000002|DMND|BRL|1000|OP01|FC4|FA2" >/dev/null
+A1=A00000000001
+A2=A00000000002
+
+# ---- FINANCIAL-CONSERVATION ----
+t1=$(bank "txn.create|TRANSFER|$A1|$A2|500|BRL|ftr|OP01|C1|FREQ1" | awk -F= '/^id/{print $2}')
+check "fin.cons.create" "T00000000001" "$t1"
+check "fin.cons.auth" "00" "$(value "$(bank "txn.authorize|$t1|OP01|C2|FREQ2")" rc=)"
+out=$(bank "txn.post|$t1|OP01|C3|FREQ3")
+check "fin.cons.post.rc" "00" "$(value "$out" rc=)"
+out=$(bank "ledger.trial")
+check "fin.cons.trial" "$(value "$out" total-debit=)" "$(value "$out" total-credit=)"
+out=$(bank "ledger.journal|TXN$t1-P")
+check "fin.cons.jrn.found" "0001" "$(value "$out" found=)"
+check "fin.cons.jrn.decl" "0002" "$(value "$out" declared=)"
+check "fin.cons.jrn.lines" "0002" "$(value "$out" lines=)"
+check "fin.cons.jrn.dr" "500.00" "$(value "$out" debit=)"
+check "fin.cons.jrn.cr" "500.00" "$(value "$out" credit=)"
+check "fin.cons.jrn.hash" "yes" "$([ -n "$(value "$out" hash=)" ] && echo yes || echo no)"
+check "fin.cons.glp" "2" "$(grep -c "|TXN$t1-P|" var/journal/postings.log)"
+check "fin.cons.bal.dst" "1500.00" "$(value "$(bank "ledger.balance|$A2")" ledger=)"
+
+# ---- FINANCIAL-IDEMPOTENCY ----
+out=$(bank "txn.post|$t1|OP01|C3|FREQ3")
+check "fin.idem.replay.rc" "00" "$(value "$out" rc=)"
+check "fin.idem.replay.status" "PO" "$(value "$out" status=)"
+check "fin.idem.jrn.once" "1" "$(grep -c "^JRN|TXN$t1-P|" var/journal/journal.log)"
+check "fin.idem.glp.once" "2" "$(grep -c "|TXN$t1-P|" var/journal/postings.log)"
+out=$(bank "txn.authorize|$t1|OP01|C4|FREQ1")
+check "fin.idem.mismatch.rc" "26" "$(value "$out" rc=)"
+check "fin.idem.mismatch.msg" "yes" "$(grep -aq 'PAYLOAD MISMATCH' <<<"$out" && echo yes || echo no)"
+out=$(bank "txn.create|TRANSFER|$A1|$A2|500|BRL|ftr|OP01|C1|FREQ1")
+check "fin.idem.create.replay" "$t1" "$(value "$out" id=)"
+
+# ---- FINANCIAL-STATE-MACHINE ----
+t2=$(bank "txn.create|FEE|$A1||10|BRL|st|OP01|C5|FRQ4" | awk -F= '/^id/{print $2}')
+check "fin.sm.post.unauth" "20" "$(value "$(bank "txn.post|$t2|OP01|C6|FRQ5")" rc=)"
+bank "txn.authorize|$t2|OP01|C7|FRQ6" >/dev/null
+check "fin.sm.post" "00" "$(value "$(bank "txn.post|$t2|OP01|C8|FRQ7")" rc=)"
+check "fin.sm.post.again" "20" "$(value "$(bank "txn.post|$t2|OP01|C9|FRQ8")" rc=)"
+check "fin.sm.settle" "00" "$(value "$(bank "txn.settle|$t2|OP01|C10|FRQ9")" rc=)"
+check "fin.sm.settle.again" "20" "$(value "$(bank "txn.settle|$t2|OP01|C11|FRQ10")" rc=)"
+check "fin.sm.complete" "00" "$(value "$(bank "txn.complete|$t2|OP01|C12|FRQ11")" rc=)"
+check "fin.sm.cancel.cp" "20" "$(value "$(bank "txn.cancel|$t2|OP01|C13|FRQ12")" rc=)"
+t3=$(bank "txn.create|FEE|$A1||10|BRL|cn|OP01|C14|FRQ13" | awk -F= '/^id/{print $2}')
+check "fin.sm.reverse.cr" "20" "$(value "$(bank "txn.reverse|$t3|OP01|C15|FRQ14")" rc=)"
+check "fin.sm.cancel.cr" "00" "$(value "$(bank "txn.cancel|$t3|OP01|C16|FRQ15")" rc=)"
+check "fin.sm.post.cancelled" "20" "$(value "$(bank "txn.post|$t3|OP01|C17|FRQ16")" rc=)"
+check "fin.sm.settle.cancelled" "20" "$(value "$(bank "txn.settle|$t3|OP01|C18|FRQ17")" rc=)"
+
+# ---- FINANCIAL-RESTART (crash seams + recovery) ----
+t4=$(bank "txn.create|TRANSFER|$A1|$A2|700|BRL|c1|OP01|C19|FRQ18" | awk -F= '/^id/{print $2}')
+bank "txn.authorize|$t4|OP01|C20|FRQ19" >/dev/null
+KOF_CRASH=AFTER-JRN bank "txn.post|$t4|OP01|C21|FRQ20" >/dev/null
+check "fin.rcv.status.au" "AU" "$(value "$(bank "txn.get|$t4")" status=)"
+check "fin.rcv.recover" "00" "$(value "$(bank "txn.recover|$t4")" rc=)"
+check "fin.rcv.status.po" "PO" "$(value "$(bank "txn.get|$t4")" status=)"
+check "fin.rcv.jrn.once" "1" "$(grep -c "^JRN|TXN$t4-P|" var/journal/journal.log)"
+check "fin.rcv.glp.once" "2" "$(grep -c "|TXN$t4-P|" var/journal/postings.log)"
+check "fin.rcv.recover.idem" "00" "$(value "$(bank "txn.recover|$t4")" rc=)"
+check "fin.rcv.trial" "$(value "$(bank "ledger.trial")" total-debit=)" "$(value "$(bank "ledger.trial")" total-credit=)"
+t5=$(bank "txn.create|TRANSFER|$A1|$A2|900|BRL|c2|OP01|C22|FRQ21" | awk -F= '/^id/{print $2}')
+bank "txn.authorize|$t5|OP01|C23|FRQ22" >/dev/null
+KOF_CRASH=AFTER-BAL bank "txn.post|$t5|OP01|C24|FRQ23" >/dev/null
+check "fin.rcv2.recover" "00" "$(value "$(bank "txn.recover|$t5")" rc=)"
+check "fin.rcv2.glp" "2" "$(grep -c "|TXN$t5-P|" var/journal/postings.log)"
+t6=$(bank "txn.create|TRANSFER|$A1|$A2|1100|BRL|c3|OP01|C25|FRQ24" | awk -F= '/^id/{print $2}')
+bank "txn.authorize|$t6|OP01|C26|FRQ25" >/dev/null
+KOF_CRASH=AFTER-PST bank "txn.post|$t6|OP01|C27|FRQ26" >/dev/null
+check "fin.rcv3.recover" "00" "$(value "$(bank "txn.recover|$t6")" rc=)"
+check "fin.rcv3.glp" "2" "$(grep -c "|TXN$t6-P|" var/journal/postings.log)"
+t7=$(bank "txn.create|TRANSFER|$A1|$A2|1300|BRL|c4|OP01|C28|FRQ27" | awk -F= '/^id/{print $2}')
+bank "txn.authorize|$t7|OP01|C29|FRQ28" >/dev/null
+KOF_CRASH=AFTER-POST bank "txn.post|$t7|OP01|C30|FRQ29" >/dev/null
+check "fin.rcv4.recover" "00" "$(value "$(bank "txn.recover|$t7")" rc=)"
+check "fin.rcv4.status" "PO" "$(value "$(bank "txn.get|$t7")" status=)"
+check "fin.rcv4.jrn.once" "1" "$(grep -c "^JRN|TXN$t7-P|" var/journal/journal.log)"
+t8=$(bank "txn.create|TRANSFER|$A1|$A2|100|BRL|n1|OP01|C31|FRQ30" | awk -F= '/^id/{print $2}')
+check "fin.rcv5.nodurable" "20" "$(value "$(bank "txn.recover|$t8")" rc=)"
+bank "txn.authorize|$t8|OP01|C32|FRQ31" >/dev/null
+check "fin.rcv5.safe.retry.post" "00" "$(value "$(bank "txn.post|$t8|OP01|C33|FRQ32")" rc=)"
+
+# ---- FINANCIAL-CONCURRENCY ----
+t9=$(bank "txn.create|TRANSFER|$A1|$A2|55|BRL|cc|OP01|C34|FRQ33" | awk -F= '/^id/{print $2}')
+bank "txn.authorize|$t9|OP01|C35|FRQ34" >/dev/null
+bank "txn.lock|A|TXN-$t9|MANUAL" >/dev/null
+out=$(bank "txn.post|$t9|OP01|C36|FRQ35")
+check "fin.con.lock.held" "24" "$(value "$out" rc=)"
+check "fin.con.lock.status" "AU" "$(value "$(bank "txn.get|$t9")" status=)"
+bank "txn.unlock|X|TXN-$t9|MANUAL" >/dev/null
+out=$(bank "txn.post|$t9|OP01|C37|FRQ36")
+check "fin.con.after.unlock" "00" "$(value "$out" rc=)"
+( bank "txn.post|$t9|OP01|C38|FRQ37" > /tmp/kof.cw1 2>/dev/null & bank "txn.post|$t9|OP01|C39|FRQ37" > /tmp/kof.cw2 2>/dev/null & wait )
+check "fin.con.race.jrn" "1" "$(grep -c "^JRN|TXN$t9-P|" var/journal/journal.log)"
+check "fin.con.race.glp" "2" "$(grep -c "|TXN$t9-P|" var/journal/postings.log)"
+check "fin.con.race.trial" "$(value "$(bank "ledger.trial")" total-debit=)" "$(value "$(bank "ledger.trial")" total-credit=)"
+
+# ---- FINANCIAL-RECON ----
+out=$(bank "reconciliation.run|JOURNAL|REC-FIN-J1")
+check "fin.rec.clean.rc" "00" "$(value "$out" rc=)"
+check "fin.rec.clean.balanced" "BALANCED" "$(value "$out" msg=)"
+check "fin.rec.matched.pos" "yes" "$([ "$(value "$out" matched=)" -gt 0 ] && echo yes || echo no)"
+cp var/journal/postings.log /tmp/kof.fin.pbak
+printf 'GLP|2000|D|          12.34|A00000000009|BRL|FIN_ORPH_X|20261002\n' >> var/journal/postings.log
+printf 'GLP|2000|C|          12.34|A00000000009|BRL|FIN_ORPH_X|20261002\n' >> var/journal/postings.log
+out=$(bank "reconciliation.run|JOURNAL|REC-FIN-J2")
+check "fin.rec.orphan.status" "EXCEPTIONS" "$(value "$out" msg=)"
+out=$(bank "reconciliation.exceptions|REC-FIN-J2")
+check "fin.rec.orphan.code" "1" "$(printf '%s' "$out" | grep -c 'code=LGR_ORPHAN')"
+check "fin.rec.orphan.key" "1" "$(printf '%s' "$out" | grep -c 'key=FIN_ORPH_X')"
+check "fin.rec.no.repair" "2" "$(grep -c '|FIN_ORPH_X|' var/journal/postings.log)"
+fe=$(printf '%s' "$out" | awk '/^exc=/{id=$0} /^code=LGR_ORPHAN/{sub("exc=","",id); print id}' | head -1)
+check "fin.rec.exc.id" "yes" "$([ -n "$fe" ] && echo yes || echo no)"
+check "fin.rec.resolve" "00" "$(value "$(bank "reconciliation.resolve|$fe|ACCEPT||OP01|closed")" rc=)"
+out=$(bank "reconciliation.exceptions|REC-FIN-J2")
+check "fin.rec.resolved" "ACCEPTED" "$(value "$out" status=)"
+cp /tmp/kof.fin.pbak var/journal/postings.log
+
+# ---- FINANCIAL-EOD ----
+out=$(bank "batch.eod|OP01|C40|EODF1")
+check "fin.eod.report" "1" "$(grep -c 'RECON-JOURNAL' var/out/eod_20261002.txt || true)"
+printf 'GLP|2000|D|          33.33|A00000000009|BRL|FIN_GHOST|20261003\n' >> var/journal/postings.log
+printf 'GLP|2000|C|          33.33|A00000000009|BRL|FIN_GHOST|20261003\n' >> var/journal/postings.log
+cp etc/bank.cfg /tmp/kof.fin.cfgbak
+sed -i 's/business-date=.*/business-date=2026-10-03/' etc/bank.cfg
+out=$(bank "batch.eod|OP01|C41|EODF2")
+check "fin.eod.stop.rc" "20" "$(value "$out" rc=)"
+check "fin.eod.stop.msg" "yes" "$(grep -aq 'RECONCILIATION EXCEPTIONS' <<<"$out" && echo yes || echo no)"
+out=$(bank "reconciliation.exceptions|REC-JOURNAL-20261003")
+for xid in $(printf '%s' "$out" | awk '/^exc=/{id=$0} /^code=LGR_ORPHAN/{sub("exc=","",id); print id}'); do
+    bank "reconciliation.resolve|$xid|ACCEPT||OP01|cleared" >/dev/null
+done
+out=$(bank "batch.eod|OP01|C42|EODF3")
+check "fin.eod.after.resolve" "00" "$(value "$out" rc=)"
+grep -v '|FIN_GHOST|' var/journal/postings.log > /tmp/kof.fin.gclean
+mv /tmp/kof.fin.gclean var/journal/postings.log
+cp /tmp/kof.fin.cfgbak etc/bank.cfg
+out=$(bank "batch.eod|OP01|C43|EODF4")
+check "fin.eod.restart.idem" "00" "$(value "$out" rc=)"
+
+# ---- FINANCIAL-AUDIT ----
+check "fin.aud.header.chain" "1" "$(grep -c "^JRN|TXN$t4-P|$t4|" var/journal/journal.log)"
+check "fin.aud.glp.chain" "2" "$(grep -c "|TXN$t4-P|" var/journal/postings.log)"
+check "fin.aud.recover.trail" "yes" "$(grep -ac 'TXN.RECOVER' var/audit/audit.log | awk '{print ($1>0)?"yes":"no"}')"
+check "fin.aud.event.posted" "yes" "$(grep -ac 'TRANSACTION.POSTED' var/journal/events.log | awk '{print ($1>0)?"yes":"no"}')"
+check "fin.aud.lock.audit" "yes" "$(grep -ac 'TXN.POST' var/audit/audit.log | awk '{print ($1>0)?"yes":"no"}')"
+
+# ---- FINANCIAL-CROSS-DOMAIN ----
+out=$(bank "pix.split.show|$spix" 2>/dev/null || true)
+out=$(bank "ledger.balance|$A1")
+check "fin.xd.balance.projection" "yes" "$([ -n "$(value "$out" ledger=)" ] && echo yes || echo no)"
+sumj=$(LC_ALL=C awk -F'|' '$1=="JRN"{s+=$11} END{printf "%.2f", s}' var/journal/journal.log)
+out=$(bank "ledger.trial")
+check "fin.xd.jrn.eq.trial" "$sumj" "$(value "$out" total-debit=)"
+check "fin.xd.trial.bal" "$(value "$out" total-debit=)" "$(value "$out" total-credit=)"
+out=$(bank "reconciliation.run|JOURNAL|REC-FIN-XD")
+check "fin.xd.journal.balanced" "BALANCED" "$(value "$out" msg=)"
+out=$(bank "reconciliation.run|TXN|REC-FIN-XTX")
+check "fin.xd.txn.run.rc" "00" "$(value "$out" rc=)"
+out=$(bank "pix.stl.recon 2>/dev/null" 2>/dev/null || true)
+
+# ====================================================================
+# gate3-production-boundary: external contracts, outbox, identity,
+# certificates, signing, inbound pipeline, external reconciliation
+# ====================================================================
+reset
+bank "ledger.init" >/dev/null
+out=$(bank "customer.create|J|BND PAYER|CNPJ|33000167000101|20261007|OP01|BDNA")
+bc1=$(value "$out" id=)
+out=$(bank "account.open|$bc1|DMND|BRL|500.00|OP01|BDNB|BRV1")
+ba1=$(value "$out" id=)
+out=$(bank "customer.create|J|BND RECEIVER|CNPJ|12.ABC.345/01DE-35|20261007|OP01|BDNC")
+bc2=$(value "$out" id=)
+out=$(bank "account.open|$bc2|DMND|BRL|0|OP01|BDND|BRV2")
+ba2=$(value "$out" id=)
+out=$(bank "customer.create|J|BND TREASURY|CNPJ|11222333000181|20261007|OP01|BDNE")
+bc3=$(value "$out" id=)
+out=$(bank "account.open|$bc3|DMND|BRL|0|OP01|BDNF|BRV3")
+ba3=$(value "$out" id=)
+out=$(bank "account.open|$bc3|DMND|BRL|0|OP01|BDNG|BRV4")
+ba4=$(value "$out" id=)
+bank "pix.rt.create|12345678|KOF PIX SERVICOS|DEBITS|DPI|Y||OP01|BDNH|PRT1" >/dev/null
+
+bnow=$(date +%Y%m%d%H%M%S)
+bdfrom=$(date +%Y%m%d)000000
+bduntil=$(date -d '+30 days' +%Y%m%d)235959
+bdyesterday=$(date -d '+1 day' +%Y%m%d)000000
+bdyday=$(date -d '+2 days' +%Y%m%d)235959
+
+# ---- CERTIFICATE LIFECYCLE ----
+out=$(bank "bnd.cert.register|CBAD|BND KOF|ICP-BR|SIGN|LOCAL_DOUBLE|ACTIVE|20200101000000|20200102000000")
+check "bnd.cert.register.expired" "00" "$(value "$out" rc=)"
+out=$(bank "bnd.cert.register|CFUT|BND KOF|ICP-BR|SIGN|LOCAL_DOUBLE|ACTIVE|$bduntil|20991231235959")
+check "bnd.cert.register.future" "00" "$(value "$out" rc=)"
+out=$(bank "bnd.cert.register|CACT|BND KOF|ICP-BR|SIGN|LOCAL_DOUBLE|ACTIVE|$bdfrom|$bduntil")
+check "bnd.cert.register.valid" "00" "$(value "$out" rc=)"
+out=$(bank "bnd.cert.register|CROT|BND KOF|ICP-BR|SIGN|LOCAL_DOUBLE|ACTIVE|$bdfrom|$bdyday")
+check "bnd.cert.register.rotate-src" "00" "$(value "$out" rc=)"
+out=$(bank "bnd.cert.register|CREV|BND KOF|ICP-BR|SIGN|LOCAL_DOUBLE|ACTIVE|$bdfrom|$bdyday")
+check "bnd.cert.register.revoke-src" "00" "$(value "$out" rc=)"
+out=$(bank "bnd.cert.register|CACT|BND KOF|ICP-BR|SIGN|LOCAL_DOUBLE|ACTIVE|$bdfrom|$bduntil")
+check "bnd.cert.register.dup" "22" "$(value "$out" rc=)"
+out=$(bank "bnd.cert.check|CACT")
+check "bnd.cert.check.valid" "00" "$(value "$out" rc=)"
+check "bnd.cert.check.valid.msg" "CERTIFICATEVALID" "$(value "$out" msg=)"
+out=$(bank "bnd.cert.check|CBAD")
+check "bnd.cert.check.expired" "20" "$(value "$out" rc=)"
+check "bnd.cert.check.expired.msg" "CERTIFICATEEXPIRED" "$(value "$out" msg=)"
+out=$(bank "bnd.cert.check|CFUT")
+check "bnd.cert.check.future" "20" "$(value "$out" rc=)"
+check "bnd.cert.check.future.msg" "CERTIFICATENOTYETVALID" "$(value "$out" msg=)"
+out=$(bank "bnd.cert.check|CMISSING")
+check "bnd.cert.check.missing" "23" "$(value "$out" rc=)"
+out=$(bank "bnd.cert.rotate|CROT|CACT")
+check "bnd.cert.rotate" "00" "$(value "$out" rc=)"
+out=$(bank "bnd.cert.check|CROT")
+check "bnd.cert.rotated.out" "20" "$(value "$out" rc=)"
+out=$(bank "bnd.cert.revoke|CREV")
+check "bnd.cert.revoke" "00" "$(value "$out" rc=)"
+out=$(bank "bnd.cert.check|CREV")
+check "bnd.cert.revoked" "20" "$(value "$out" rc=)"
+check "bnd.cert.revoked.msg" "CERTIFICATEREVOKED" "$(value "$out" msg=)"
+
+# ---- SIGNING AND VERIFICATION ----
+out=$(bank "bnd.cert.sign|CACT|hello-boundary")
+check "bnd.sign.rc" "00" "$(value "$out" rc=)"
+bsig=$(value "$out" sig=)
+check "bnd.sign.format" "SIG-CACT-" "$(printf '%.9s' "$bsig")"
+out=$(bank "bnd.cert.verify|CACT|hello-boundary|$bsig")
+check "bnd.verify.ok" "00" "$(value "$out" rc=)"
+out=$(bank "bnd.cert.verify|CACT|hello-tampered|$bsig")
+check "bnd.verify.tampered" "20" "$(value "$out" rc=)"
+out=$(bank "bnd.cert.sign|CBAD|hello-boundary")
+check "bnd.sign.expired" "20" "$(value "$out" rc=)"
+out=$(bank "bnd.cert.sign|CREV|hello-boundary")
+check "bnd.sign.revoked" "20" "$(value "$out" rc=)"
+out=$(bank "bnd.cert.sign|CFUT|hello-boundary")
+check "bnd.sign.notyetyvalid" "20" "$(value "$out" rc=)"
+
+# ---- OUTBOUND INTENT LIFECYCLE ----
+out=$(bank "bnd.outbox.add|OB0001|STL|SPI|STL-SUBMIT|MSGIDOB0001|E2EOB0000000000000000000000001|250.00|BRL|STLOBL0001|NONE|CACT|settlement cycle|OP01")
+check "bnd.ob.add.rc" "00" "$(value "$out" rc=)"
+check "bnd.ob.add.fp" "yes" "$([ -n "$(value "$out" fp=)" ] && echo yes || echo no)"
+out=$(bank "bnd.outbox.add|OB0001|STL|SPI|STL-SUBMIT|MSGIDOB0001|E2EOB0000000000000000000000001|250.00|BRL|STLOBL0001|NONE|CACT|settlement cycle|OP01")
+check "bnd.ob.add.dup" "22" "$(value "$out" rc=)"
+out=$(bank "bnd.outbox.process|OB0001")
+check "bnd.ob.process.rc" "00" "$(value "$out" rc=)"
+check "bnd.ob.process.state" "ACKED" "$(value "$out" state=)"
+check "bnd.ob.process.outcome" "SUBMITTED" "$(value "$out" outcome=)"
+check "bnd.ob.process.class" "OK" "$(value "$out" class=)"
+check "bnd.ob.process.retry" "N" "$(value "$out" retryable=)"
+check "bnd.ob.process.extref" "yes" "$([ -n "$(value "$out" extref=)" ] && echo yes || echo no)"
+out=$(bank "bnd.outbox.process|OB0001")
+check "bnd.ob.refinal.rc" "00" "$(value "$out" rc=)"
+check "bnd.ob.refinal.state" "ACKED" "$(value "$out" state=)"
+out=$(bank "bnd.outbox.get|OB0001")
+check "bnd.ob.get.state" "ACKED" "$(value "$out" state=)"
+check "bnd.ob.audit" "yes" "$(grep -ac 'BND-PROCESS' var/audit/audit.log | awk '{print ($1>0)?"yes":"no"}')"
+check "bnd.ob.event" "yes" "$(grep -ac 'BOUNDARY.OUTBOUND.ACKED.v1' var/journal/events.log | awk '{print ($1>0)?"yes":"no"}')"
+
+out=$(bank "bnd.outbox.add|OB0002|STL|SPI|STL-SUBMIT|MSGIDOB0002|E2EOB0000000000000000000000002|50.00|BRL|STLOBL0002|REJECT||settlement cycle|OP01") >/dev/null
+out=$(bank "bnd.outbox.process|OB0002")
+check "bnd.ob.reject.rc" "20" "$(value "$out" rc=)"
+check "bnd.ob.reject.state" "REJECTED" "$(value "$out" state=)"
+check "bnd.ob.reject.class" "RJCT" "$(value "$out" class=)"
+
+# ---- UNKNOWN OUTCOME -> QUERY CORRELATION (no blind retry) ----
+out=$(bank "bnd.outbox.add|OB0003|STL|SPI|STL-SUBMIT|MSGIDOB0003|E2EOB0000000000000000000000003|100.00|BRL|STLOBL0003|UNKNOWN||settlement cycle|OP01") >/dev/null
+out=$(bank "bnd.outbox.process|OB0003")
+check "bnd.ob.unk.rc" "24" "$(value "$out" rc=)"
+check "bnd.ob.unk.state" "UNKNOWN" "$(value "$out" state=)"
+check "bnd.ob.unk.correlate" "Y" "$(value "$out" correlate=)"
+check "bnd.ob.unk.retry" "N" "$(value "$out" retryable=)"
+out=$(bank "bnd.outbox.query|OB0003")
+check "bnd.ob.query1.rc" "24" "$(value "$out" rc=)"
+check "bnd.ob.query1.state" "UNKNOWN" "$(value "$out" state=)"
+out=$(bank "bnd.outbox.query|OB0003")
+check "bnd.ob.query2.rc" "00" "$(value "$out" rc=)"
+check "bnd.ob.query2.state" "ACKED" "$(value "$out" state=)"
+check "bnd.ob.query2.outcome" "SETTLED" "$(value "$out" outcome=)"
+
+# ---- TRANSPORT FAILURE IS RETRYABLE; CRASH SEAMS RECOVER SAFE ----
+out=$(bank "bnd.outbox.add|OB0004|PAY|SPI|PAY-SUBMIT|MSGIDOB0004|E2EOB0000000000000000000000004|10.00|BRL|TXNBND0004|NONE||payment submit|OP01") >/dev/null
+KOF_BND_SEAM=TP-BEFORE-SEND out=$(KOF_BND_SEAM=TP-BEFORE-SEND bank "bnd.outbox.process|OB0004")
+check "bnd.ob.tperr.rc" "09" "$(value "$out" rc=)"
+out=$(bank "bnd.outbox.process|OB0004")
+check "bnd.ob.tperr.retry.rc" "00" "$(value "$out" rc=)"
+check "bnd.ob.tperr.retry.state" "ACKED" "$(value "$out" state=)"
+
+out=$(bank "bnd.outbox.add|OB0005|PAY|SPI|PAY-SUBMIT|MSGIDOB0005|E2EOB0000000000000000000000005|20.00|BRL|TXNBND0005|NONE||payment submit|OP01") >/dev/null
+KOF_BND_SEAM=CRASH_BEFORE_SEND out=$(KOF_BND_SEAM=CRASH_BEFORE_SEND bank "bnd.outbox.process|OB0005")
+check "bnd.ob.crashb.rc" "90" "$(value "$out" rc=)"
+out=$(bank "bnd.outbox.get|OB0005")
+check "bnd.ob.crashb.state" "PENDING" "$(value "$out" state=)"
+out=$(bank "bnd.outbox.process|OB0005")
+check "bnd.ob.crashb.recover" "ACKED" "$(value "$out" state=)"
+
+out=$(bank "bnd.outbox.add|OB0006|STL|SPI|STL-SUBMIT|MSGIDOB0006|E2EOB0000000000000000000000006|30.00|BRL|STLOBL0006|NONE||settlement cycle|OP01") >/dev/null
+KOF_BND_SEAM=CRASH_AFTER_SEND out=$(KOF_BND_SEAM=CRASH_AFTER_SEND bank "bnd.outbox.process|OB0006")
+check "bnd.ob.crasha.rc" "90" "$(value "$out" rc=)"
+check "bnd.ob.crasha.state" "SENT" "$(value "$out" state=)"
+out=$(bank "bnd.outbox.process|OB0006")
+check "bnd.ob.crasha.resolve" "ACKED" "$(value "$out" state=)"
+check "bnd.ob.crasha.retries" "002" "$(value "$out" retries=)"
+
+# ---- OPERATOR CORRELATION REQUIRES EXPLICIT REASON ----
+out=$(bank "bnd.outbox.add|OB0007|STL|SPI|STL-SUBMIT|MSGIDOB0007|E2EOB0000000000000000000000007|40.00|BRL|STLOBL0007|UNKNOWN||settlement cycle|OP01") >/dev/null
+out=$(bank "bnd.outbox.process|OB0007") >/dev/null
+out=$(bank "bnd.outbox.correlate|OB0007|ACKED||OP09")
+check "bnd.ob.corrr.noason.rc" "20" "$(value "$out" rc=)"
+out=$(bank "bnd.outbox.correlate|OB0007|ACKED|confirmed via SPI portal|OP09")
+check "bnd.ob.correlate.rc" "00" "$(value "$out" rc=)"
+check "bnd.ob.correlate.state" "ACKED" "$(value "$out" state=)"
+
+out=$(bank "bnd.outbox.reap|0")
+check "bnd.ob.reap.guard" "20" "$(value "$out" rc=)"
+
+# ---- DICT CHANNEL THROUGH TRANSPORT CONTRACT ----
+out=$(bank "bnd.tp.send|DICT|KEY-REGISTER|kof.bnd.test@pix.com|E2EDICT00000000000000000000001|0|BRL|NONE")
+check "bnd.dict.send.rc" "00" "$(value "$out" rc=)"
+check "bnd.dict.send.outcome" "ACTIVE" "$(value "$out" outcome=)"
+check "bnd.dict.send.class" "OK" "$(value "$out" class=)"
+out=$(bank "bnd.tp.send|DICT|KEY-REGISTER|kof.bnd.test@pix.com|E2EDICT00000000000000000000001|0|BRL|NONE")
+check "bnd.dict.dup" "22" "$(value "$out" rc=)"
+
+# ---- INBOUND PIPELINE: SCHEMA / SECURITY / IDENTITY / CORE ----
+be1="E12345678202610071500abcdefghf10"
+BIN="spi.tax.ingest|5.13|pacs.008|$be1|100.00|MANU|33000167000101|12ABC34501DE35|||1234567901|CBSSPLIT:INF:50.00:BRL;IBSSPLIT:INF:30.00:BRL|$ba1|$bc1|$ba2,$bc2,,,$ba3,$bc3,$ba4,$bc3,OP01,BNDREQ1"
+out=$(bank "bnd.inbound|BNDMSGID00100|||$BIN")
+check "bnd.in.rc" "00" "$(value "$out" rc=)"
+check "bnd.in.state" "POSTED" "$(value "$out" state=)"
+check "bnd.in.outcome" "ACKED" "$(value "$out" outcome=)"
+bpix=$(value "$out" pix=)
+check "bnd.in.haspix" "yes" "$([ -n "$bpix" ] && echo yes || echo no)"
+check "bnd.in.jrn" "yes" "$([ -n "$(value "$out" jrn=)" ] && echo yes || echo no)"
+out=$(bank "ledger.balance|$ba1")
+check "bnd.in.payer.ledger" "400.00" "$(value "$out" ledger=)"
+out=$(bank "bnd.inbound|BNDMSGID00100|||$BIN")
+check "bnd.in.replay.rc" "00" "$(value "$out" rc=)"
+check "bnd.in.replay.outcome" "REPLAY" "$(value "$out" outcome=)"
+check "bnd.in.replay.pix" "$bpix" "$(value "$out" pix=)"
+out=$(bank "ledger.balance|$ba1")
+check "bnd.in.replay.noeffect" "400.00" "$(value "$out" ledger=)"
+check "bnd.in.jrncount" "2" "$(grep -c "^JRN|" var/journal/journal.log)"
+
+be2="E12345678202610071500abcdefghf20"
+BIN2="spi.tax.ingest|5.13|pacs.008|$be2|100.00|MANU|33000167000101|12ABC34501DE35|||1234567902|CBSSPLIT:INF:50.00:BRL;IBSSPLIT:INF:30.00:BRL|$ba1|$bc1|$ba2,$bc2,,,$ba3,$bc3,$ba4,$bc3,OP01,BNDREQ2"
+out=$(bank "bnd.inbound|BNDMSGID00100|||$BIN2")
+check "bnd.in.reuse.rc" "26" "$(value "$out" rc=)"
+check "bnd.in.reuse.msg" "MESSAGEREUSEWITHDIFFERENTPAYLOAD" "$(value "$out" msg=)"
+
+out=$(bank "bnd.inbound|BNDMSGID00101|||spi.tax.ingest|5.11|pacs.008|$be2|100.00|MANU|33000167000101|12ABC34501DE35|||1234567903|CBSSPLIT:INF:50.00:BRL;IBSSPLIT:INF:30.00:BRL|$ba1|$bc1|$ba2,$bc2,,,$ba3,$bc3,$ba4,$bc3,OP01,BNDREQ3")
+check "bnd.in.ver.rc" "21" "$(value "$out" rc=)"
+check "bnd.in.ver.state" "REJECTED" "$(value "$out" state=)"
+out=$(bank "bnd.inbound|BNDMSGID00102|||spi.tax.ingest|5.13|pacs.999|$be2|100.00|MANU|33000167000101|12ABC34501DE35|||1234567904|CBSSPLIT:INF:50.00:BRL;IBSSPLIT:INF:30.00:BRL|$ba1|$bc1|$ba2,$bc2,,,$ba3,$bc3,$ba4,$bc3,OP01,BNDREQ4")
+check "bnd.in.msgnm.rc" "21" "$(value "$out" rc=)"
+KOF_BND_SEAM=MALFORMED_RESPONSE out=$(KOF_BND_SEAM=MALFORMED_RESPONSE bank "bnd.inbound|BNDMSGID00103|||$BIN2")
+check "bnd.in.malformed.rc" "21" "$(value "$out" rc=)"
+out=$(bank "bnd.inbound|||$BIN")
+check "bnd.in.empty.msgid" "21" "$(value "$out" rc=)"
+
+# signed inbound (canonical: msgid|e2e|gross|msgnm)
+out=$(bank "bnd.cert.sign|CACT|BNDMSGID00104|$be1|100.00|pacs.008")
+check "bnd.in.sign.rc" "00" "$(value "$out" rc=)"
+bsig=$(value "$out" sig=)
+out=$(bank "bnd.inbound|BNDMSGID00104|CACT|$bsig|$BIN")
+check "bnd.in.signed.rc" "00" "$(value "$out" rc=)"
+check "bnd.in.signed.state" "POSTED" "$(value "$out" state=)"
+out=$(bank "bnd.inbound|BNDMSGID00105|CACT|BADSIGVALUE|$BIN2")
+check "bnd.in.badsig.rc" "21" "$(value "$out" rc=)"
+check "bnd.in.badsig.state" "SECURITY" "$(value "$out" state=)"
+KOF_BND_SEAM=SECURITY_FAILURE out=$(KOF_BND_SEAM=SECURITY_FAILURE bank "bnd.inbound|BNDMSGID00106|CACT|$bsig|$BIN")
+check "bnd.in.seamfail.rc" "21" "$(value "$out" rc=)"
+out=$(bank "bnd.inbound|BNDMSGID00107|CBAD|$bsig|$BIN")
+check "bnd.in.expiredcert.rc" "21" "$(value "$out" rc=)"
+out=$(bank "ledger.balance|$ba1")
+check "bnd.in.security.noeffect" "400.00" "$(value "$out" ledger=)"
+
+# crash seams around response persistence
+be3="E12345678202610071500abcdefghf30"
+BIN3="spi.tax.ingest|5.13|pacs.008|$be3|100.00|MANU|33000167000101|12ABC34501DE35|||1234567905|CBSSPLIT:INF:50.00:BRL;IBSSPLIT:INF:30.00:BRL|$ba1|$bc1|$ba2,$bc2,,,$ba3,$bc3,$ba4,$bc3,OP01,BNDREQ5"
+KOF_BND_SEAM=CRASH_BEFORE_RESPERSIST out=$(KOF_BND_SEAM=CRASH_BEFORE_RESPERSIST bank "bnd.inbound|BNDMSGID00110|||$BIN3")
+check "bnd.in.crashb.rc" "90" "$(value "$out" rc=)"
+out=$(bank "ledger.balance|$ba1")
+check "bnd.in.crashb.noeffect" "400.00" "$(value "$out" ledger=)"
+out=$(bank "bnd.inbound|BNDMSGID00110|||$BIN3")
+check "bnd.in.crashb.recover" "00" "$(value "$out" rc=)"
+check "bnd.in.crashb.posted" "POSTED" "$(value "$out" state=)"
+
+be4="E12345678202610071500abcdefghf40"
+BIN4="spi.tax.ingest|5.13|pacs.008|$be4|100.00|MANU|33000167000101|12ABC34501DE35|||1234567906|CBSSPLIT:INF:50.00:BRL;IBSSPLIT:INF:30.00:BRL|$ba1|$bc1|$ba2,$bc2,,,$ba3,$bc3,$ba4,$bc3,OP01,BNDREQ6"
+KOF_BND_SEAM=CRASH_AFTER_RESPERSIST out=$(KOF_BND_SEAM=CRASH_AFTER_RESPERSIST bank "bnd.inbound|BNDMSGID00111|||$BIN4")
+check "bnd.in.crasha.rc" "90" "$(value "$out" rc=)"
+out=$(bank "bnd.inbound|BNDMSGID00111|||$BIN4")
+check "bnd.in.crasha.replay" "REPLAY" "$(value "$out" outcome=)"
+out=$(bank "ledger.balance|$ba1")
+check "bnd.in.crasha.single.effect" "200.00" "$(value "$out" ledger=)"
+check "bnd.in.registry.audit" "yes" "$(grep -ac 'BND-INBOUND' var/audit/audit.log | awk '{print ($1>0)?"yes":"no"}')"
+out=$(bank "bnd.msgid.get|BNDMSGID00110")
+check "bnd.in.registry.state" "POSTED" "$(value "$out" state=)"
+check "bnd.in.registry.trace" "yes" "$([ -n "$(value "$out" jrn=)" ] && echo yes || echo no)"
+
+# ---- EOD STAGE INCLUDES BOUNDARY RECONCILIATION ----
+out=$(bank "batch.eod|OP01|BEOD|BREQ")
+check "bnd.eod.rc" "00" "$(value "$out" rc=)"
+check "bnd.eod.reconline" "1" "$(grep -c 'RECON-BOUNDARY' var/out/eod_20261002.txt || true)"
+
+# ---- EXTERNAL RECONCILIATION ----
+out=$(bank "reconciliation.run|BOUNDARY|REC-BND-OK")
+check "bnd.rec.ok.rc" "00" "$(value "$out" rc=)"
+check "bnd.rec.ok.status" "BALANCED" "$(value "$out" msg=)"
+out=$(bank "bnd.outbox.add|OB0009|STL|SPI|STL-SUBMIT|MSGIDOB0009|E2EOB0000000000000000000000009|45.00|BRL|STLOBL0009|UNKNOWN||||OP01") >/dev/null
+out=$(bank "bnd.outbox.process|OB0009") >/dev/null
+out=$(bank "reconciliation.run|BOUNDARY|REC-BND-UNC")
+check "bnd.rec.uncorr.rc" "00" "$(value "$out" rc=)"
+check "bnd.rec.uncorr.status" "EXCEPTIONS" "$(value "$out" msg=)"
+out=$(bank "reconciliation.exceptions|REC-BND-UNC")
+check "bnd.rec.uncorr.code" "1" "$(printf '%s' "$out" | grep -c 'code=OUTB_UNCORR')"
+out=$(bank "bnd.outbox.correlate|OB0009|REJECTED|external confirmed rejection|OP09")
+check "bnd.rec.correlate.rc" "00" "$(value "$out" rc=)"
+out=$(bank "reconciliation.run|BOUNDARY|REC-BND-OK2")
+check "bnd.rec.ok2.status" "BALANCED" "$(value "$out" msg=)"
+rm -f var/data/pxspis.idx
+out=$(bank "reconciliation.run|BOUNDARY|REC-BND-NOEXT")
+check "bnd.rec.noext.status" "EXCEPTIONS" "$(value "$out" msg=)"
+out=$(bank "reconciliation.exceptions|REC-BND-NOEXT")
+check "bnd.rec.noext.found" "yes" "$(printf '%s' "$out" | grep -aq 'code=OUTB_NOEXT' && echo yes || echo no)"
+rm -f var/journal/journal.log
+out=$(bank "reconciliation.run|BOUNDARY|REC-BND-NOLDG")
+check "bnd.rec.noledg.status" "EXCEPTIONS" "$(value "$out" msg=)"
+out=$(bank "reconciliation.exceptions|REC-BND-NOLDG")
+check "bnd.rec.noledg.found" "yes" "$(printf '%s' "$out" | grep -aq 'code=MSG_NOLEDG' && echo yes || echo no)"
+
+# ---- CONFIG DEFAULTS: EXPLICIT ENVIRONMENT ----
+grep -q '^environment=LOCAL_DOUBLE' etc/pix.cfg
+check "bnd.cfg.environment" "yes" "$([ $? -eq 0 ] && echo yes || echo no)"
+grep -q '^security-adapter=LOCAL_DOUBLE' etc/pix.cfg
+check "bnd.cfg.security" "yes" "$([ $? -eq 0 ] && echo yes || echo no)"
+grep -q '^transport-adapter=LOCALDOUBLE' etc/pix.cfg
+check "bnd.cfg.transport" "yes" "$([ $? -eq 0 ] && echo yes || echo no)"
+
+
+# ==================================================================
+# GATE 4 - OPERATIONS HARDENING
+# ==================================================================
+
+# ---- LEGACY MODE: NO LIFECYCLE FILE, BUSINESS STILL ALLOWED ----
+out=$(bank "ops.inspect")
+check "g4.legacy.state" "STOPPED" "$(value "$out" state=)"
+check "g4.legacy.corrupt" "00000" "$(value "$out" corrupt-lines=)"
+check "g4.legacy.txnp" "00000" "$(value "$out" txn-pend=)"
+check "g4.legacy.jrn" "00000" "$(value "$out" jrn-stage=)"
+check "g4.legacy.eodint" "00000" "$(value "$out" eod-interrupted=)"
+out=$(bank "txn.create|DEPOSIT||$ba1|1000.00|BRL|G4DEP|OP99|G4LGC|G4DP1")
+check "g4.legacy.business" "00" "$(value "$out" rc=)"
+bank "txn.authorize|$(value "$out" id=)|OP99|G4LGC2|G4DP2" >/dev/null
+bank "txn.post|$(value "$out" id=)|OP99|G4LGC3|G4DP3" >/dev/null
+out=$(bank "batch.eod|OP99|G4CHK|R9")
+check "g4.eodchk.rc" "00" "$(value "$out" rc=)"
+out=$(bank "ops.batch.status|20261002")
+check "g4.eodchk.done" "DONE" "$(value "$out" state=)"
+out=$(bank "ops.inspect")
+check "g4.legacy.class" "OPERATOR_REQUIRED" "$(value "$out" class=)"
+
+# ---- LIFECYCLE: START ROUTES THROUGH RECOVERY (OPERATOR FINDINGS) ----
+out=$(bank "system.status")
+check "g4.status.stopped" "STOPPED" "$(value "$out" state=)"
+out=$(bank "system.stop|GRACEFUL|OPS01|S1")
+check "g4.stop.notrunning" "22" "$(value "$out" rc=)"
+out=$(bank "ops.health")
+check "g4.health.stale" "stale-state" "$(value "$out" live=)"
+out=$(bank "system.start|boot-g4|OPS01|R1")
+check "g4.start.rc" "00" "$(value "$out" rc=)"
+check "g4.start.state" "RECOVERY_REQUIRED" "$(value "$out" state=)"
+out=$(bank "system.start|again|OPS01|R2")
+check "g4.start.recovery-blocked" "20" "$(value "$out" rc=)"
+out=$(bank "system.recover.resume|OPS01|R12")
+check "g4.resume.rc" "00" "$(value "$out" rc=)"
+check "g4.resume.state" "RUNNING" "$(value "$out" state=)"
+out=$(bank "system.start|dup|OPS01|R2B")
+check "g4.start.dup" "22" "$(value "$out" rc=)"
+out=$(bank "ops.health")
+check "g4.health.live" "ok" "$(value "$out" live=)"
+
+# ---- DRAIN: NEW WORK BLOCKED, BOUNDARY OPS CONTINUE ----
+out=$(bank "system.drain|window|OPS01|R3")
+check "g4.drain.rc" "00" "$(value "$out" rc=)"
+check "g4.drain.state" "DRAINING" "$(value "$out" state=)"
+out=$(bank "txn.create|DEPOSIT||$ba1|1.00|BRL|g4drain|OPS01|C1|FRQD")
+check "g4.gate.drain.block" "20" "$(value "$out" rc=)"
+out=$(bank "bnd.outbox.add|OBG4DRN|STL|SPI|STL-SUBMIT|MSGG4DRN|E2EG4DRN000000000000000000000001|45.00|BRL|STLG4DRN|UNKNOWN||||OP01")
+check "g4.gate.drain.bnd" "00" "$(value "$out" rc=)"
+out=$(bank "ops.config.verify")
+check "g4.config.rc" "00" "$(value "$out" rc=)"
+
+# ---- BACKUP ON DRAINED SYSTEM ----
+out=$(bank "ops.backup.create|g4bk|OPS01|R5")
+check "g4.backup.rc" "00" "$(value "$out" rc=)"
+check "g4.backup.manifest" "yes" "$([ -f var/bkp/g4bk/manifest.txt ] && echo yes || echo no)"
+out=$(bank "ops.backup.verify|g4bk")
+check "g4.backup.verify" "00" "$(value "$out" rc=)"
+out=$(bank "system.stop|IMMEDIATE|OPS01|R6")
+check "g4.stop.rc" "00" "$(value "$out" rc=)"
+check "g4.stop.state" "STOPPED" "$(value "$out" state=)"
+
+# ---- GATING: BUSINESS BLOCKED WHILE STOPPED ----
+out=$(bank "txn.create|DEPOSIT||$ba1|1.00|BRL|g4off|OPS01|C2|FRQO")
+check "g4.gate.stopped.block" "20" "$(value "$out" rc=)"
+
+# ---- CORRUPTION DETECTION BLOCKS START ----
+printf 'ZZ|GARBAGE-CORRUPTION\n' >> var/journal/journal.log
+out=$(bank "ops.inspect")
+check "g4.inspect.corrupt" "CORRUPT" "$(value "$out" class=)"
+check "g4.inspect.corruptlines" "yes" "$(grep -ac '^FINDING|CHAIN_TRUNCATED|journal' <<<"$out" | awk '{print ($1>=1)?"yes":"no"}')"
+out=$(bank "system.start|boot-bad|OPS01|R7")
+check "g4.start.corrupt.block" "20" "$(value "$out" rc=)"
+
+# ---- RESTORE DRILL ----
+out=$(bank "ops.restore.verify|g4bk")
+check "g4.restore.verify" "00" "$(value "$out" rc=)"
+out=$(bank "ops.restore.apply|g4bk|WRONG|OPS01|R8")
+check "g4.restore.confirm.fail" "20" "$(value "$out" rc=)"
+out=$(bank "ops.restore.apply|g4bk|CONFIRM-RESTORE|OPS01|R9")
+check "g4.restore.apply" "00" "$(value "$out" rc=)"
+out=$(bank "ops.inspect")
+check "g4.inspect.after.restore" "OPERATOR_REQUIRED" "$(value "$out" class=)"
+check "g4.inspect.after.restore.corrupt" "00000" "$(value "$out" corrupt-lines=)"
+out=$(bank "system.start|restored|OPS01|R10")
+check "g4.start.after.restore" "00" "$(value "$out" rc=)"
+check "g4.start.after.restore.state" "RECOVERY_REQUIRED" "$(value "$out" state=)"
+out=$(bank "system.recover.resume|OPS01|R13")
+check "g4.resume2.rc" "00" "$(value "$out" rc=)"
+check "g4.resume2.state" "RUNNING" "$(value "$out" state=)"
+
+# ---- INTERRUPTED BATCH: FAIL, DETECT, REPAIR, RESUME ----
+out=$(bank "bnd.outbox.add|OBG4UNK|STL|SPI|STL-SUBMIT|MSGG4UNK|E2EG4GHOST0000000000000000000099|11.00|BRL|STLG4UNK|UNKNOWN||||OP01")
+check "g4.eod.unk.add" "00" "$(value "$out" rc=)"
+out=$(bank "bnd.outbox.process|OBG4UNK")
+check "g4.eod.unk.state" "UNKNOWN" "$(value "$out" state=)"
+sed -i 's/^business-date=.*/business-date=2026-12-31/' etc/bank.cfg
+out=$(bank "batch.eod|OP01|G4FAIL|R30")
+check "g4.eod.fail.rc" "20" "$(value "$out" rc=)"
+out=$(bank "ops.batch.status|20261231")
+check "g4.eod.fail.state" "FAILED" "$(value "$out" state=)"
+out=$(bank "ops.inspect")
+check "g4.eod.interrupted" "yes" "$(grep -aq '^FINDING|EOD_INTERRUPTED|' <<<"$out" && echo yes || echo no)"
+check "g4.eod.interrupted.count" "00001" "$(value "$out" eod-interrupted=)"
+out=$(bank "bnd.outbox.correlate|OBG4UNK|REJECTED|external confirmed rejection|OP01")
+check "g4.eod.unk.correlate" "00" "$(value "$out" rc=)"
+out=$(bank "batch.eod|RESUME")
+check "g4.eod.resume.rc" "00" "$(value "$out" rc=)"
+out=$(bank "ops.inspect")
+check "g4.eod.interrupted.gone" "00000" "$(value "$out" eod-interrupted=)"
+out=$(bank "ops.batch.status|20261231")
+check "g4.eod.resume.state" "DONE" "$(value "$out" state=)"
+sed -i 's/^business-date=.*/business-date=2026-10-02/' etc/bank.cfg
+
+# ---- RECOVERY FINDINGS FROM CRASH SEAM ----
+out=$(bank "txn.create|DEPOSIT||$ba1|500.00|BRL|G4RD|OPS01|C2R|G4RD2")
+tR1=$(value "$out" id=)
+bank "txn.authorize|$tR1|OPS01|C4|FRQR2" >/dev/null
+KOF_CRASH=AFTER-JRN bank "txn.post|$tR1|OPS01|C5|FRQR3" >/dev/null
+out=$(bank "ops.inspect")
+check "g4.inspect.txnp" "00001" "$(value "$out" txn-pend=)"
+check "g4.inspect.jrnp" "00001" "$(value "$out" jrn-stage=)"
+check "g4.finding.stage" "yes" "$(grep -aq "FINDING|JRN_STAGED|TXN$tR1-P" <<<"$out" && echo yes || echo no)"
+out=$(bank "txn.recover|$tR1")
+check "g4.recover.rc" "00" "$(value "$out" rc=)"
+out=$(bank "ops.inspect")
+check "g4.inspect.txnp.gone" "00000" "$(value "$out" txn-pend=)"
+check "g4.inspect.jrnp.gone" "00000" "$(value "$out" jrn-stage=)"
+
+# ---- STALE LOCKS ----
+bank "txn.lock|A|TXN-$tR1|G4MAN" >/dev/null
+out=$(bank "ops.locks.list")
+check "g4.lock.fresh.list" "yes" "$(grep -aq 'FRESH' <<<"$out" && echo yes || echo no)"
+out=$(bank "ops.locks.release|TXN-$tR1|manual override|OPS01|R13")
+check "g4.lock.fresh.block" "20" "$(value "$out" rc=)"
+out=$(bank "ops.locks.release|TXN-NOSUCH|ghost|OPS01|R13B")
+check "g4.lock.missing" "22" "$(value "$out" rc=)"
+
+# ---- INCIDENTS ----
+out=$(bank "ops.incident.open|G4INC1|uncorrelated outbound intent|SEV2|OPS01|evidence line for gate4 incident test")
+check "g4.inc.open" "00" "$(value "$out" rc=)"
+out=$(bank "ops.incident.open|G4INC1|dup attempt|SEV2|OPS01|dup evidence for the very same incident key")
+check "g4.inc.open.dup" "22" "$(value "$out" rc=)"
+out=$(bank "ops.incident.resolve|G4INC1|skip ack|OPS01|R14")
+check "g4.inc.resolve.early" "20" "$(value "$out" rc=)"
+out=$(bank "ops.incident.ack|G4INC1|OPS01|R15")
+check "g4.inc.ack" "00" "$(value "$out" rc=)"
+check "g4.inc.ack.state" "ACK" "$(value "$out" state=)"
+out=$(bank "ops.incident.resolve|G4INC1|correlated with SPI portal export|OPS01|R16")
+check "g4.inc.resolve" "00" "$(value "$out" rc=)"
+out=$(bank "ops.incident.resolve|G4INC1|again|OPS01|R17")
+check "g4.inc.resolve.dup" "22" "$(value "$out" rc=)"
+
+# ---- CORRELATION ----
+out=$(bank "ops.correlate|$tR1")
+check "g4.correlate.rc" "00" "$(value "$out" rc=)"
+check "g4.correlate.txn" "yes" "$(grep -aq 'CO|TXN|' <<<"$out" && echo yes || echo no)"
+out=$(bank "ops.correlate|BNDMSGID00104")
+check "g4.correlate.msgid" "yes" "$(grep -aq 'CO|MSGID|' <<<"$out" && echo yes || echo no)"
+
+# ---- CERTIFICATE EXPIRY SCAN ----
+out=$(bank "bnd.cert.register|CG4OLD|KOF OPS|ICP-BR|SIGN|LOCAL_DOUBLE|ACTIVE|20200101000000|20200102000000")
+check "g4.cert.exp.register" "00" "$(value "$out" rc=)"
+out=$(bank "ops.cert.expiring|0")
+check "g4.cert.expired.detected" "yes" "$(grep -aq 'CERT-EXPIRED CG4OLD' <<<"$out" && echo yes || echo no)"
+check "g4.cert.active.clean" "yes" "$(grep -q 'CERT-EXPIRING CACT' <<<"$out" && echo no || echo yes)"
+
+# ---- AUDIT TRAIL FOR OPERATOR ACTIONS ----
+check "g4.audit.lifecycle" "yes" "$(grep -aq 'LIFE.CHANGE' var/audit/audit.log && echo yes || echo no)"
+check "g4.audit.restore" "yes" "$(grep -aq 'BK.APPLY' var/audit/audit.log && echo yes || echo no)"
+check "g4.audit.restore" "yes" "$(grep -aq 'BK.APPLY' var/audit/audit.log && echo yes || echo no)"
+check "g4.audit.incident" "yes" "$(grep -aq 'INC.OPEN' var/audit/audit.log && echo yes || echo no)"
+
+# ---- GATE 5: QA PROFILE AND FAIL-CLOSED ADAPTER SELECTION ----
+PIX_BAK=$(mktemp)
+cp etc/pix.cfg "$PIX_BAK"
+
+# QA alias is an accepted, double-only environment.
+sed -i 's/^environment=.*/environment=QA/' etc/pix.cfg
+out=$(bank "ops.config.verify")
+check "g5.qa.env.ok" "00" "$(value "$out" rc=)"
+out=$(bank "bnd.tp.send|SPI|STL-SUBMIT|MSGG5A|E2EG5AGHOST00000000000000000000|10.00|BRL")
+check "g5.qa.send.rc" "00" "$(value "$out" rc=)"
+check "g5.qa.send.class" "OK" "$(value "$out" class=)"
+out=$(bank "bnd.cert.sign|CACT|MSGG5A|E2EG5AGHOST00000000000000000000|10.00|pacs.008")
+check "g5.qa.sign.rc" "00" "$(value "$out" rc=)"
+# QA may not point at a production/uninstalled adapter.
+sed -i 's/^transport-adapter=.*/transport-adapter=SPI-MQ/' etc/pix.cfg
+out=$(bank "ops.config.verify")
+check "g5.qa.prodtp.fail" "20" "$(value "$out" rc=)"
+sed -i 's/^transport-adapter=.*/transport-adapter=LOCALDOUBLE/' etc/pix.cfg
+sed -i 's/^adapter=.*/adapter=NONE/' etc/pix.cfg
+out=$(bank "ops.config.verify")
+check "g5.qa.adapternone.fail" "20" "$(value "$out" rc=)"
+sed -i 's/^adapter=.*/adapter=FIXTURE/' etc/pix.cfg
+
+# PRODUCTION fails closed: nothing is installed to talk to BCB.
+sed -i 's/^environment=.*/environment=PRODUCTION/' etc/pix.cfg
+out=$(bank "ops.config.verify")
+check "g5.prod.cfg.fail" "20" "$(value "$out" rc=)"
+out=$(bank "bnd.tp.send|SPI|STL-SUBMIT|MSGG5B|E2EG5BGHOST00000000000000000000|10.00|BRL")
+check "g5.prod.send.blocked" "20" "$(value "$out" rc=)"
+check "g5.prod.send.class" "TPERR" "$(value "$out" class=)"
+out=$(bank "bnd.cert.sign|CACT|MSGG5B|E2EG5BGHOST00000000000000000000|10.00|pacs.008")
+check "g5.prod.sign.blocked" "20" "$(value "$out" rc=)"
+out=$(bank "bnd.cert.verify|CACT|$bsig|$be1|100.00|pacs.008")
+check "g5.prod.verify.blocked" "20" "$(value "$out" rc=)"
+out=$(bank "bnd.inbound|BNDG5PROD|CACT|$bsig|$BIN")
+check "g5.prod.inbound.blocked" "20" "$(value "$out" rc=)"
+# outbound durability: transport refusal never fakes success.
+out=$(bank "bnd.outbox.add|OBG5B|STL|SPI|STL-SUBMIT|MSGG5B|E2EG5BGHOST00000000000000000000|21.00|BRL|STLG5B|PENDING||||OP01")
+check "g5.prod.ob.add" "00" "$(value "$out" rc=)"
+out=$(bank "bnd.outbox.process|OBG5B")
+check "g5.prod.ob.state" "PENDING" "$(value "$out" state=)"
+out=$(bank "bnd.outbox.get|OBG5B")
+check "g5.prod.ob.durable" "PENDING" "$(value "$out" state=)"
+
+# Unknown and blank environments fail closed everywhere.
+sed -i 's/^environment=.*/environment=MYSTERY/' etc/pix.cfg
+out=$(bank "ops.config.verify")
+check "g5.bad.env.cfg" "20" "$(value "$out" rc=)"
+out=$(bank "bnd.tp.send|SPI|STL-SUBMIT|MSGG5C|E2EG5CGHOST00000000000000000000|10.00|BRL")
+check "g5.bad.env.send" "20" "$(value "$out" rc=)"
+sed -i 's/^environment=.*/environment=/' etc/pix.cfg
+out=$(bank "ops.config.verify")
+check "g5.blank.env.cfg" "20" "$(value "$out" rc=)"
+out=$(bank "bnd.tp.send|SPI|STL-SUBMIT|MSGG5D|E2EG5DGHOST00000000000000000000|10.00|BRL")
+check "g5.blank.env.send" "20" "$(value "$out" rc=)"
+
+# Restore the default QA (LOCAL_DOUBLE) profile; boundary works again.
+cp "$PIX_BAK" etc/pix.cfg
+out=$(bank "bnd.tp.send|SPI|STL-SUBMIT|MSGG5E|E2EG5EGHOST00000000000000000000|10.00|BRL")
+check "g5.restored.send" "00" "$(value "$out" rc=)"
+grep -q "^environment=LOCAL_DOUBLE" etc/pix.cfg
+check "g5.restored.env" "yes" "$([ $? -eq 0 ] && echo yes || echo no)"
+check "g5.pix.cfg.intact" "yes" "$(cmp -s etc/pix.cfg "$PIX_BAK" && echo yes || echo no)"
+rm -f "$PIX_BAK"
 
 echo "tests: $((PASS + FAIL)) passed: $PASS failed: $FAIL"
 [ "$FAIL" -eq 0 ]

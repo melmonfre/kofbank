@@ -201,6 +201,7 @@ DO-STL-QUERY.
             MOVE "SPI SETTLEMENT RESOLVED" TO SI-MSG
             REWRITE SP-REC
         ELSE
+            REWRITE SP-REC
             MOVE "24" TO SI-RC
             MOVE "SPI SETTLEMENT STILL UNKNOWN" TO SI-MSG
         END-IF

@@ -1,0 +1,50 @@
+record BankReply(Int exit, String text)
+
+record TxnReply(String rc, String id, String status, String msg)
+
+BankReply raw(String line) {
+    var home = config.env("BANK_HOME")
+    var res = shell.pipeline(listOf(
+        listOf("printf", line + "\n"),
+        listOf(home + "/build/bank")))
+    return BankReply(res.exitCode, res.stdout)
+}
+
+String valueOf(BankReply reply, String key) {
+    for (var line in reply.text.split("\n")) {
+        if (line.startsWith(key + "=")) {
+            return line.substring((key.length() + 1), line.length()).trim()
+        }
+    }
+    return ""
+}
+
+BankReply contract() {
+    return raw("system.contract")
+}
+
+BankReply health() {
+    return raw("ops.health")
+}
+
+BankReply balance(String account) {
+    return raw("ledger.balance|" + account)
+}
+
+TxnReply txnRequest(String op, String txnId, String operator, String correlation, String requestId) {
+    var reply = raw("txn." + op + "|" + txnId + "|" + operator + "|" + correlation + "|" + requestId)
+    return TxnReply(valueOf(reply, "rc"), txnId, valueOf(reply, "status"), valueOf(reply, "msg"))
+}
+
+TxnReply deposit(String account, String amount, String description, String operator, String correlation, String requestId) {
+    var reply = raw("txn.create|DEPOSIT||" + account + "|" + amount + "|BRL|" + description + "|" + operator + "|" + correlation + "|" + requestId)
+    return TxnReply(valueOf(reply, "rc"), valueOf(reply, "id"), valueOf(reply, "status"), valueOf(reply, "msg"))
+}
+
+BankReply createCustomer(String name, String doc, String operator, String correlation) {
+    return raw("customer.create|J|" + name + "|CNPJ|" + doc + "|20261007|" + operator + "|" + correlation)
+}
+
+BankReply openAccount(String customerId, String operator, String correlation) {
+    return raw("account.open|" + customerId + "|DMND|BRL|500.00|" + operator + "|" + correlation + "|KOFV1")
+}

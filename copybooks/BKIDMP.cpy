@@ -4,3 +4,4 @@
           05 BK-IDM-MODE       PIC X(01).
           05 BK-IDM-RESULT     PIC X(120).
           05 BK-IDM-STATUS     PIC X(02).
+          05 BK-IDM-FINGERPRINT PIC X(16).

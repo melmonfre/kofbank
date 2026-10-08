@@ -47,6 +47,26 @@
        05 PX-SETTLE-DATE    PIC 9(08).
        05 PX-RECON-DATE     PIC 9(08).
        05 PX-EXPIRE-DATE    PIC 9(08).
+       05 PX-SPLIT-FLAG     PIC X(01).
+       05 PX-SPLIT-CNT      PIC 9(02).
+       05 PX-SPLIT-TOTAL    PIC S9(15)V99 COMP-3.
+       05 PX-SPLIT-TAX      PIC S9(15)V99 COMP-3.
+       05 PX-S-ROW OCCURS 20 TIMES.
+          10 PX-PS-SEQ       PIC 9(02).
+          10 PX-PS-ROLE      PIC X(12).
+          10 PX-PS-ID        PIC X(12).
+          10 PX-PS-DOC-TYPE  PIC X(04).
+          10 PX-PS-DOC       PIC X(20).
+          10 PX-PS-AMT       PIC S9(15)V99 COMP-3.
+          10 PX-PS-TYPE      PIC X(10).
+          10 PX-PS-REF       PIC X(32).
+          10 PX-PS-DOCREF    PIC X(24).
+          10 PX-PS-TAXTYPE   PIC X(10).
+          10 PX-PS-TAXCAT    PIC X(08).
+          10 PX-PS-NAME      PIC X(60).
+          10 PX-PS-CUST      PIC X(12).
+          10 PX-PS-ALLOC-ID  PIC X(12).
+          10 PX-PS-STATUS    PIC X(12).
        05 PX-CREATED        PIC 9(14).
        05 PX-UPDATED        PIC 9(14).
        05 PX-VERSION        PIC 9(05).

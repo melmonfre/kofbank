@@ -8,12 +8,25 @@
           05 PC-E2E-ISPB       PIC X(08).
           05 PC-AMOUNT-MAX     PIC S9(15)V99 COMP-3.
           05 PC-KEY-LIMIT      PIC 9(04).
-          05 PC-QR-TTL         PIC 9(06).
+          05 PC-QR-EXP-DEF     PIC 9(07).
           05 PC-DEV-DAYS       PIC 9(04).
           05 PC-MED-DAYS       PIC 9(04).
           05 PC-STALE-DAYS     PIC 9(04).
           05 PC-EXPIRE-DAYS    PIC 9(04).
+          05 PC-CLAIM-RES-DAYS  PIC 9(04).
+          05 PC-CLAIM-CMP-DAYS  PIC 9(04).
           05 PC-SIMULATE       PIC X(12).
           05 PC-STL-LAG        PIC 9(04).
           05 PC-STL-ACCT      PIC X(10).
           05 PC-STL-CASH      PIC X(10).
+          05 PC-SPI-VER        PIC X(05).
+          05 PC-ENVIRONMENT    PIC X(16).
+          05 PC-TRANSPORT      PIC X(12).
+          05 PC-TIMEOUT-SECS   PIC 9(05).
+          05 PC-MAX-RETRY      PIC 9(03).
+          05 PC-SECURITY       PIC X(12).
+          05 PC-SIGN-ALG       PIC X(12).
+          05 PC-CERT-REF       PIC X(24).
+          05 PC-KEY-REF        PIC X(24).
+          05 PC-TRUSTED-SUBJ   PIC X(24).
+          05 PC-CLOCK-REF      PIC X(08).

@@ -9,7 +9,15 @@
           05 XK-ACCT           PIC X(12).
           05 XK-PART           PIC X(12).
           05 XK-STATUS         PIC X(12).
-          05 XK-CLAIM          PIC X(12).
+          05 XK-CLAIM          PIC X(18).
+          05 XK-CLAIM-ID       PIC X(24).
+          05 XK-CLAIM-TYPE     PIC X(12).
+          05 XK-RESOL-END      PIC 9(08).
+          05 XK-COMPL-END      PIC 9(08).
+          05 XK-CONFIRM-R      PIC X(20).
+          05 XK-CANCEL-R       PIC X(20).
+          05 XK-CANCEL-BY      PIC X(12).
+          05 XK-DICT-VER       PIC 9(05).
           05 XK-FRAUD          PIC X(01).
           05 XK-SELF           PIC X(01).
           05 XK-COUNT          PIC 9(04).
@@ -21,3 +29,4 @@
           05 XK-REQUEST        PIC X(24).
           05 XK-RC             PIC X(02).
           05 XK-MSG            PIC X(80).
+          05 XK-VERIFIED       PIC X(12).

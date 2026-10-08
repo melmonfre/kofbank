@@ -7,7 +7,9 @@
        05 PK-PART           PIC X(12).
        05 PK-SELF           PIC X(01).
        05 PK-STATUS         PIC X(12).
-       05 PK-CLAIM          PIC X(12).
+       05 PK-CLAIM          PIC X(18).
+       05 PK-CLAIM-ID       PIC X(24).
+       05 PK-DICT-VER       PIC 9(05).
        05 PK-FRAUD          PIC X(01).
        05 PK-BIZDATE        PIC 9(08).
        05 PK-ACTIVE-DATE    PIC 9(08).

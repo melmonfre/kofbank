@@ -1,0 +1,182 @@
+IDENTIFICATION DIVISION.
+PROGRAM-ID. BOPSCFG.
+
+*> Configuration hardening (GATE 4).  Parses bank.cfg and pix.cfg and
+*> fails closed on dangerous combinations: a production environment may
+*> not run fixture adapters, signing may not silently fall back to the
+*> local double in production, certificate references must be explicit
+*> in production.  Reports effective config; never changes files.
+
+ENVIRONMENT DIVISION.
+INPUT-OUTPUT SECTION.
+FILE-CONTROL.
+    SELECT CFG-FILE ASSIGN TO WS-CFG-PATH
+        ORGANIZATION IS LINE SEQUENTIAL
+        FILE STATUS IS WS-CFG-ST.
+
+DATA DIVISION.
+FILE SECTION.
+FD CFG-FILE.
+01 CFG-LINE PIC X(200).
+
+WORKING-STORAGE SECTION.
+01 WS-CFG-PATH PIC X(200).
+01 WS-CMD PIC X(600).
+01 WS-HOME PIC X(80).
+01 WS-CFG-ST PIC X(02).
+01 WS-EOF PIC X(01).
+01 WS-KEY PIC X(40).
+01 WS-VAL PIC X(120).
+01 WS-EQUIV PIC X(01) VALUE "=".
+01 WS-ENV-VAL PIC X(40).
+01 WS-TP-VAL PIC X(40).
+01 WS-SEC-VAL PIC X(40).
+01 WS-SIGNREF PIC X(80).
+01 WS-ISSUER PIC X(80).
+01 WS-PROD PIC X(01).
+01 WS-ADP-VAL PIC X(40).
+01 WS-ALG-VAL PIC X(40).
+01 WS-REPORTED PIC X(01).
+01 WS-LINE-NO PIC 9(04).
+
+LINKAGE SECTION.
+COPY "BKCFCP".
+
+PROCEDURE DIVISION USING BK-CFG-PARMS.
+    MOVE "00" TO CF-RC
+    MOVE SPACES TO CF-MSG
+    ACCEPT WS-HOME FROM ENVIRONMENT "BANK_HOME"
+    MOVE "N" TO WS-PROD
+    MOVE SPACES TO WS-ENV-VAL WS-TP-VAL WS-SEC-VAL WS-SIGNREF
+        WS-ISSUER
+    PERFORM PARSE-PIX
+    IF CF-RC NOT = "00"
+        GOBACK
+    END-IF
+    IF WS-ENV-VAL = "PRODUCTION"
+        MOVE "Y" TO WS-PROD
+    END-IF
+    PERFORM CHECK-RULES
+    IF CF-RC = "00"
+        PERFORM CHECK-RULES-2
+    END-IF
+    MOVE SPACES TO WS-CMD
+    STRING "grep -v '^#' " DELIMITED SIZE
+        FUNCTION TRIM(WS-HOME) "/etc/bank.cfg 2>/dev/null"
+        DELIMITED SIZE INTO WS-CMD
+    END-STRING
+    CALL "SYSTEM" USING WS-CMD
+    PERFORM REPORT-PIX
+    MOVE "CONFIG VERIFIED" TO CF-MSG
+    GOBACK.
+
+PARSE-PIX.
+    MOVE SPACES TO WS-CFG-PATH
+    STRING FUNCTION TRIM(WS-HOME) "/etc/pix.cfg" DELIMITED SIZE
+        INTO WS-CFG-PATH
+    OPEN INPUT CFG-FILE
+    IF WS-CFG-ST NOT = "00"
+        MOVE "20" TO CF-RC
+        MOVE "pix.cfg MISSING OR UNREADABLE" TO CF-MSG
+        GOBACK
+    END-IF
+    MOVE "N" TO WS-EOF
+    MOVE 0 TO WS-LINE-NO
+    PERFORM UNTIL WS-EOF = "Y"
+        READ CFG-FILE
+            AT END MOVE "Y" TO WS-EOF
+            NOT AT END
+                ADD 1 TO WS-LINE-NO
+                IF CFG-LINE(1:1) NOT = "#"
+                    MOVE SPACES TO WS-KEY WS-VAL
+                    UNSTRING CFG-LINE DELIMITED WS-EQUIV
+                        INTO WS-KEY WS-VAL
+                    END-UNSTRING
+                    PERFORM RECORD-KEY
+                END-IF
+        END-READ
+    END-PERFORM
+    CLOSE CFG-FILE.
+
+RECORD-KEY.
+    EVALUATE FUNCTION TRIM(WS-KEY)
+        WHEN "environment" MOVE WS-VAL TO WS-ENV-VAL
+        WHEN "adapter" MOVE WS-VAL TO WS-ADP-VAL
+        WHEN "sign-algorithm" MOVE WS-VAL TO WS-ALG-VAL
+        WHEN "transport-adapter" MOVE WS-VAL TO WS-TP-VAL
+        WHEN "security-adapter" MOVE WS-VAL TO WS-SEC-VAL
+        WHEN "signing-cert-ref" MOVE WS-VAL TO WS-SIGNREF
+        WHEN "trusted-issuer-subject" MOVE WS-VAL TO WS-ISSUER
+        WHEN OTHER CONTINUE
+    END-EVALUATE.
+
+CHECK-RULES.
+    IF WS-ENV-VAL = SPACES
+        MOVE "20" TO CF-RC
+        MOVE "environment MUST BE EXPLICIT" TO CF-MSG
+        GOBACK
+    END-IF
+    IF WS-PROD = "Y"
+        IF WS-TP-VAL = "LOCALDOUBLE" OR WS-TP-VAL = SPACES
+            MOVE "20" TO CF-RC
+            MOVE "PRODUCTION MAY NOT USE LOCAL DOUBLE TRANSPORT"
+                TO CF-MSG
+            GOBACK
+        END-IF
+        IF WS-SEC-VAL = "LOCAL_DOUBLE" OR WS-SEC-VAL = SPACES
+            MOVE "20" TO CF-RC
+            MOVE "PRODUCTION MAY NOT USE LOCAL DOUBLE SECURITY"
+                TO CF-MSG
+            GOBACK
+        END-IF
+        IF WS-SIGNREF = SPACES
+            MOVE "20" TO CF-RC
+            MOVE "PRODUCTION REQUIRES EXPLICIT SIGNING CERT"
+                TO CF-MSG
+            GOBACK
+        END-IF
+        IF WS-ISSUER = SPACES
+            MOVE "20" TO CF-RC
+            MOVE "PRODUCTION REQUIRES TRUSTED ISSUER" TO CF-MSG
+            GOBACK
+        END-IF
+    END-IF.
+
+CHECK-RULES-2.
+    IF WS-ENV-VAL NOT = "LOCAL_DOUBLE" AND
+       WS-ENV-VAL NOT = "QA" AND WS-ENV-VAL NOT = "PRODUCTION"
+        MOVE "20" TO CF-RC
+        MOVE "ENVIRONMENT NOT IN ALLOWED SET" TO CF-MSG
+        GOBACK
+    END-IF
+    IF WS-ENV-VAL = "LOCAL_DOUBLE" OR WS-ENV-VAL = "QA"
+        IF WS-ADP-VAL NOT = "FIXTURE"
+            MOVE "20" TO CF-RC
+            MOVE "QA MAY NOT SELECT AN UNINSTALLED ADAPTER"
+                TO CF-MSG
+            GOBACK
+        END-IF
+        IF WS-TP-VAL NOT = "LOCALDOUBLE"
+            MOVE "20" TO CF-RC
+            MOVE "QA MAY NOT USE PRODUCTION TRANSPORT" TO CF-MSG
+            GOBACK
+        END-IF
+        IF WS-SEC-VAL NOT = "LOCAL_DOUBLE"
+            MOVE "20" TO CF-RC
+            MOVE "QA MAY NOT USE PRODUCTION SECURITY" TO CF-MSG
+            GOBACK
+        END-IF
+        IF WS-ALG-VAL NOT = "HASH-DOUBLE"
+            MOVE "20" TO CF-RC
+            MOVE "QA MUST USE DETERMINISTIC TEST SIGNING" TO CF-MSG
+            GOBACK
+        END-IF
+    END-IF.
+
+REPORT-PIX.
+    MOVE SPACES TO WS-CMD
+    STRING "grep -v '^#' " DELIMITED SIZE
+        FUNCTION TRIM(WS-HOME) "/etc/pix.cfg 2>/dev/null"
+        DELIMITED SIZE INTO WS-CMD
+    END-STRING
+    CALL "SYSTEM" USING WS-CMD.

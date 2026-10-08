@@ -16,6 +16,8 @@
           05 ER-REC-LED-ID  PIC X(20).
           05 ER-REC-PAY-ID  PIC X(20).
           05 ER-REC-TXN-ID  PIC X(20).
+          05 ER-REC-JRN-ID  PIC X(20).
+          05 ER-REC-BND-ID  PIC X(20).
           05 ER-REC-CRD-ID  PIC X(20).
           05 ER-CRD-EOD     PIC X(80).
           05 ER-REC-LN-ID   PIC X(20).

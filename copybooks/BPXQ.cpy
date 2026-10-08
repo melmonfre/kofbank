@@ -26,8 +26,8 @@
        05 QR-PIX-ID         PIC X(12).
        05 QR-READ-COUNT     PIC 9(05).
        05 QR-CREATE-DATE    PIC 9(08).
-       05 QR-TTL            PIC 9(06).
-       05 QR-EXPIRE-DATE    PIC 9(08).
+       05 QR-TTL            PIC 9(07).
+       05 QR-EXPIRES-AT     PIC 9(14).
        05 QR-BIZDATE        PIC 9(08).
        05 QR-CREATED        PIC 9(14).
        05 QR-UPDATED        PIC 9(14).

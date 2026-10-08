@@ -40,6 +40,12 @@
           05 XP-CHANNEL        PIC X(08).
           05 XP-SIM            PIC X(12).
           05 XP-ALLOW-FREE     PIC X(01).
+      *> Reserved extension point (pix 2026 SPI Split Tax / Split
+      *> Payments): blank = single destination (current behavior);
+      *> "Y" = multi-destination intent, refused until the allocation
+      *> model (sum of allocations = gross, auditable legs) lands.
+      *> It must not be silently downgraded to a single transfer.
+          05 XP-SPLIT          PIC X(01).
           05 XP-FORCE          PIC X(01).
           05 XP-AUTO           PIC X(01).
           05 XP-COUNT          PIC 9(05).
@@ -52,5 +58,32 @@
           05 XP-OPERATOR       PIC X(12).
           05 XP-CORR           PIC X(24).
           05 XP-REQUEST        PIC X(24).
+      *> Split allocation request table (modality SPLIT only).  The
+      *> rows are the payment decomposition supplied by the authorized
+      *> initiator; the engine never calculates them.  Amounts are in
+      *> lowest currency units like every other COMP-3 field.
+          05 XP-S-ROW OCCURS 20 TIMES.
+             10 XP-PS-SEQ      PIC 9(02).
+             10 XP-PS-ROLE     PIC X(12).
+             10 XP-PS-ID       PIC X(12).
+             10 XP-PS-DOC-TYPE PIC X(04).
+             10 XP-PS-DOC      PIC X(20).
+             10 XP-PS-NAME     PIC X(60).
+             10 XP-PS-AMT      PIC S9(15)V99 COMP-3.
+             10 XP-PS-TYPE     PIC X(10).
+             10 XP-PS-REF      PIC X(32).
+             10 XP-PS-DOCREF   PIC X(50).
+             10 XP-PS-TAXTYPE  PIC X(10).
+             10 XP-PS-TAXCAT   PIC X(08).
+             10 XP-PS-CUST     PIC X(12).
+             10 XP-PS-ALLOC-ID PIC X(12).
+             10 XP-PS-STATUS   PIC X(12).
+             10 XP-PS-ORIG     PIC X(12).
+             10 XP-PS-TXN-ID   PIC X(12).
+             10 XP-PS-JRN-ID   PIC X(20).
+          05 XP-SPLIT-CNT      PIC 9(02).
+          05 XP-SPLIT-TOTAL    PIC S9(15)V99 COMP-3.
+          05 XP-SPLIT-TAX      PIC S9(15)V99 COMP-3.
+          05 XP-SPLIT-EXT      PIC S9(15)V99 COMP-3.
           05 XP-RC             PIC X(02).
           05 XP-MSG            PIC X(80).
