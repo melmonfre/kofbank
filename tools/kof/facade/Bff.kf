@@ -1,0 +1,214 @@
+record OwnerCheck(Bool ok, String custId)
+
+OwnerCheck ownedAccount(String accountId) {
+    var acct = accountGet(accountId)
+    if (rcOf(acct) != "00") {
+        return OwnerCheck(false, "")
+    }
+    return OwnerCheck(true, valueOf(acct, "customer"))
+}
+
+String sessionUserOr401() {
+    var id = identify(header("x-session-token"))
+    if (id.ok()) {
+        return id.username() + "." + id.customerId()
+    }
+    status(401, errJson("UNAUTHENTICATED", id.reason(), "AUTHENTICATION", "", "", "", false))
+    return ""
+}
+
+Void serveOn(Int port) {
+    var app = web.app()
+
+    app.get("/api/health") {
+        var ins = opsInspect()
+        if (rcOf(ins) != "00") {
+            return status(503, errJson("BACKEND_UNAVAILABLE", "core health probe failed", "INFRASTRUCTURE", rcOf(ins), valueOf(ins, "class"), "", true))
+        }
+        return json.encode(HealthResponse("UP", valueOf(ins, "class"), appVersion()))
+    }
+
+    app.post("/api/auth/login") {
+        var raw = body()
+        var m = flatJsonToMap(raw)
+        var user = mapGet(m, "username")
+        var secret = mapGet(m, "secret")
+        var tok = tokenFor(user, secret)
+        if (tok == "") {
+            return status(401, errJson("INVALID_CREDENTIALS", "username or secret rejected", "AUTHENTICATION", "", "", "", false))
+        }
+        return json.encode(AuthResponse(tok, user, devCustomer(user), true))
+    }
+
+    app.get("/api/accounts") {
+        var who = sessionUserOr401()
+        if (who == "") {
+            return status(401, errJson("UNAUTHENTICATED", "missing or invalid session token", "AUTHENTICATION", "", "", "", false))
+        }
+        var cust = fieldOf(who, 1, ".")
+        var found = accountFind(cust)
+        if (rcOf(found) != "00") {
+            return status(503, errJson("BACKEND_UNAVAILABLE", "core inquiry failed", "INFRASTRUCTURE", rcOf(found), "", "", true))
+        }
+        var rows = listOf<AccountDto>()
+        for (var line in found.text.split("\n")) {
+            if (line.startsWith("id=")) {
+                var acctId = kv(line, "id")
+                var acct = accountGet(acctId)
+                if (rcOf(acct) == "00") {
+                    rows.add(AccountDto(acctId, valueOf(acct, "customer"), valueOf(acct, "product"), valueOf(acct, "currency"), valueOf(acct, "status"), valueOf(acct, "opened")))
+                }
+            }
+        }
+        return json.encode(rows)
+    }
+
+    app.get("/api/accounts/:id") {
+        var who = sessionUserOr401()
+        if (who == "") {
+            return status(401, errJson("UNAUTHENTICATED", "missing or invalid session token", "AUTHENTICATION", "", "", "", false))
+        }
+        var cust = fieldOf(who, 1, ".")
+        var accountId = param("id")
+        var own = ownedAccount(accountId)
+        if (!own.ok()) {
+            return status(404, errJson("ACCOUNT_NOT_FOUND", "no such account in core", "NOT_FOUND", "23", "", "", false))
+        }
+        if (own.custId() != cust) {
+            return status(403, errJson("FORBIDDEN", "account belongs to another subject", "AUTHORIZATION", "", "", "", false))
+        }
+        var acct = accountGet(accountId)
+        return json.encode(AccountDto(accountId, valueOf(acct, "customer"), valueOf(acct, "product"), valueOf(acct, "currency"), valueOf(acct, "status"), valueOf(acct, "opened")))
+    }
+
+    app.get("/api/accounts/:id/balance") {
+        var who = sessionUserOr401()
+        if (who == "") {
+            return status(401, errJson("UNAUTHENTICATED", "missing or invalid session token", "AUTHENTICATION", "", "", "", false))
+        }
+        var cust = fieldOf(who, 1, ".")
+        var accountId = param("id")
+        var own = ownedAccount(accountId)
+        if (!own.ok()) {
+            return status(404, errJson("ACCOUNT_NOT_FOUND", "no such account in core", "NOT_FOUND", "23", "", "", false))
+        }
+        if (own.custId() != cust) {
+            return status(403, errJson("FORBIDDEN", "account belongs to another subject", "AUTHORIZATION", "", "", "", false))
+        }
+        var bal = balance(accountId)
+        var mapped = mapCoreToHttp(bal, "")
+        if (mapped != "") {
+            return mapped
+        }
+        return json.encode(BalanceDto(accountId, valueOf(bal, "ledger"), valueOf(bal, "available"), valueOf(bal, "blocked"), valueOf(bal, "currency"), "COBOL-BGLBAL"))
+    }
+
+    app.get("/api/accounts/:id/transactions") {
+        var who = sessionUserOr401()
+        if (who == "") {
+            return status(401, errJson("UNAUTHENTICATED", "missing or invalid session token", "AUTHENTICATION", "", "", "", false))
+        }
+        var cust = fieldOf(who, 1, ".")
+        var accountId = param("id")
+        var own = ownedAccount(accountId)
+        if (!own.ok()) {
+            return status(404, errJson("ACCOUNT_NOT_FOUND", "no such account in core", "NOT_FOUND", "23", "", "", false))
+        }
+        if (own.custId() != cust) {
+            return status(403, errJson("FORBIDDEN", "account belongs to another subject", "AUTHORIZATION", "", "", "", false))
+        }
+        var listing = txnList(cust)
+        if (rcOf(listing) != "00") {
+            return status(503, errJson("BACKEND_UNAVAILABLE", "core listing failed", "INFRASTRUCTURE", rcOf(listing), "", "", true))
+        }
+        var rows = listOf<TxnDto>()
+        for (var line in listing.text.split("\n")) {
+            var parsed = parseTxnLine(line)
+            if (parsed.ok() && (parsed.src() == accountId || parsed.dst() == accountId)) {
+                rows.add(TxnDto(parsed.id(), kv(line, "type"), kv(line, "status"), kv(line, "amount"), kv(line, "currency"), parsed.src(), parsed.dst(), kv(line, "created")))
+            }
+        }
+        return json.encode(rows)
+    }
+
+    app.get("/api/transactions/:id") {
+        var who = sessionUserOr401()
+        if (who == "") {
+            return status(401, errJson("UNAUTHENTICATED", "missing or invalid session token", "AUTHENTICATION", "", "", "", false))
+        }
+        var cust = fieldOf(who, 1, ".")
+        var txnId = param("id")
+        var rec = txnGet(txnId)
+        var mapped = mapCoreToHttp(rec, "")
+        if (mapped != "") {
+            return mapped
+        }
+        var src = valueOf(rec, "source")
+        var dst = valueOf(rec, "destination")
+        var allowed = false
+        if (src != "" && ownedAccount(src).ok() && ownedAccount(src).custId() == cust) {
+            allowed = true
+        }
+        if (dst != "" && ownedAccount(dst).ok() && ownedAccount(dst).custId() == cust) {
+            allowed = true
+        }
+        if (!allowed) {
+            return status(403, errJson("FORBIDDEN", "transaction not visible to this subject", "AUTHORIZATION", "", "", "", false))
+        }
+        return json.encode(TxnDetailDto(txnId, valueOf(rec, "type"), valueOf(rec, "status"), valueOf(rec, "amount"), valueOf(rec, "currency"), src, dst, valueOf(rec, "origin"), valueOf(rec, "reason"), valueOf(rec, "journal"), valueOf(rec, "created")))
+    }
+
+    app.post("/api/accounts/:id/deposits") {
+        var who = sessionUserOr401()
+        if (who == "") {
+            return status(401, errJson("UNAUTHENTICATED", "missing or invalid session token", "AUTHENTICATION", "", "", "", false))
+        }
+        var user = fieldOf(who, 0, "")
+        var cust = fieldOf(who, 1, ".")
+        var accountId = param("id")
+        var own = ownedAccount(accountId)
+        if (!own.ok()) {
+            return status(404, errJson("ACCOUNT_NOT_FOUND", "no such account in core", "NOT_FOUND", "23", "", "", false))
+        }
+        if (own.custId() != cust) {
+            return status(403, errJson("FORBIDDEN", "account belongs to another subject", "AUTHORIZATION", "", "", "", false))
+        }
+        var parsed = parseDepositBody(body())
+        if (!parsed.ok()) {
+            return status(400, errJson("INVALID_DEPOSIT_BODY", parsed.reason(), "VALIDATION", "", "", parsed.correlationId(), false))
+        }
+        var corr = parsed.correlationId()
+        var dep = deposit(accountId, parsed.amount(), parsed.description(), "BFF-" + user, corr, parsed.requestId())
+        if (dep.rc == "24" || dep.rc == "26" || dep.rc == "20" || dep.rc == "22") {
+            if (dep.rc == "24") {
+                return status(504, errJson("UNKNOWN_OUTCOME", "deposit outcome pending; resolve by request identity before any retry", "UNKNOWN", dep.rc, dep.msg, corr, false))
+            }
+            if (dep.rc == "26") {
+                return status(409, errJson("IDEMPOTENCY_CONFLICT", "payload differs under known request identity", "CONFLICT", dep.rc, dep.msg, corr, false))
+            }
+            return status(422, errJson("BUSINESS_REJECTION", dep.msg, "BUSINESS", dep.rc, dep.msg, corr, false))
+        }
+        if (dep.rc != "00") {
+            return status(502, errJson("UNCLASSIFIED_CORE_RC", "unexpected deposit return code", "INFRASTRUCTURE", dep.rc, dep.msg, corr, false))
+        }
+        var au = txnRequest("authorize", dep.id, "BFF-" + user, corr, parsed.requestId() + "-AU")
+        var po = txnRequest("post", dep.id, "BFF-" + user, corr, parsed.requestId() + "-PO")
+        var st = txnRequest("settle", dep.id, "BFF-" + user, corr, parsed.requestId() + "-ST")
+        var cp = txnRequest("complete", dep.id, "BFF-" + user, corr, parsed.requestId() + "-CP")
+        if (au.status == "UNKNOWN" || po.status == "UNKNOWN" || st.status == "UNKNOWN" || cp.status == "UNKNOWN") {
+            return status(504, errJson("UNKNOWN_OUTCOME", "lifecycle transition pending for txn " + dep.id, "UNKNOWN", "24", au.msg + "/" + po.msg + "/" + st.msg + "/" + cp.msg, corr, false))
+        }
+        if (cp.status != "CP") {
+            return status(502, errJson("LIFECYCLE_INCOMPLETE", "txn " + dep.id + " did not reach completed state", "INFRASTRUCTURE", au.rc + po.rc + st.rc + cp.rc, "au=" + au.status + " po=" + po.status + " st=" + st.status + " cp=" + cp.status, corr, false))
+        }
+        return json.encode(OpResponse("COMPLETED", dep.id, "deposit completed by core", corr))
+    }
+
+    app.listen(port)
+}
+
+Void bffStart() {
+    var p = config.int("server.port", 8977)
+    println("bff: listening on " + p + " v" + appVersion())
+    serveOn(p)
+}

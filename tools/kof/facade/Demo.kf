@@ -1,0 +1,32 @@
+Void seedDemoData() {
+    var c1 = createCustomer("ANA CANON", "61010101000101", "SEED", "SEED-A")
+    var c2 = createCustomer("BOB CANON", "61010101000290", "SEED", "SEED-B")
+    var c3 = createCustomer("CARL CANON", "61010101000373", "SEED", "SEED-C")
+    openAccount(valueOf(c1, "id"), "SEED", "SEED-AA", "SEED-RA")
+    openAccount(valueOf(c2, "id"), "SEED", "SEED-BA", "SEED-RB")
+    openAccount(valueOf(c3, "id"), "SEED", "SEED-CA", "SEED-RC")
+    var d1 = deposit("A00000000001", "250000", "DEMO SALARY", "SEED", "SEED-D1", "SEED-REQ1")
+    txnRequest("authorize", d1.id, "SEED", "SEED-D1", "SEED-REQ2")
+    txnRequest("post", d1.id, "SEED", "SEED-D1", "SEED-REQ3")
+    txnRequest("settle", d1.id, "SEED", "SEED-D1", "SEED-REQ4")
+    txnRequest("complete", d1.id, "SEED", "SEED-D1", "SEED-REQ5")
+}
+
+main() {
+    var home = config.env("BANK_HOME")
+    if (home == "") {
+        println("demo: BANK_HOME not set")
+        process.exit(2)
+    }
+    var h = contract()
+    if (valueOf(h, "contract") != "KBCLI-1") {
+        println("demo: core contract mismatch")
+        process.exit(3)
+    }
+    seedDemoData()
+    spawn serveOn(8977)
+    time.sleep(500)
+    println("demo: BFF up, exercising portal flow")
+    portalDemo()
+    process.exit(0)
+}

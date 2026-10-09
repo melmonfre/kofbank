@@ -8,50 +8,117 @@ Int check(String name, Bool cond) {
 }
 
 main() {
-    var failures = 0
+    var f = 0
     var h = contract()
-    failures = failures + check("contract.handshake", valueOf(h, "contract") == "KBCLI-1")
-    failures = failures + check("contract.transport", valueOf(h, "transport") == "request-line/keyvalue")
-    failures = failures + check("health.rc", valueOf(health(), "rc") == "00")
+    f = f + check("contract.handshake", valueOf(h, "contract") == "KBCLI-1")
+    f = f + check("contract.transport", valueOf(h, "transport") == "request-line/keyvalue")
+    f = f + check("health.rc", valueOf(health(), "rc") == "00")
 
     var now = "" + time.now()
     var seed = now.substring(now.length() - 8, now.length())
     var doc = "99" + seed + "0001"
     var cust = createCustomer("KOF ECOSYSTEM " + seed, doc, "OPS01", "KC" + seed)
     var custId = valueOf(cust, "id")
-    failures = failures + check("customer.created", valueOf(cust, "rc") == "00" && custId != "")
+    f = f + check("customer.created", valueOf(cust, "rc") == "00" && custId != "")
 
-    var acct = openAccount(custId, "OPS01", "KA" + seed)
+    var acct = openAccount(custId, "OPS01", "KA" + seed, "KO" + seed)
     var acctId = valueOf(acct, "id")
-    failures = failures + check("account.opened", valueOf(acct, "rc") == "00" && acctId != "")
+    f = f + check("account.opened", valueOf(acct, "rc") == "00" && acctId != "")
 
     var before = balance(acctId)
-    failures = failures + check("balance.before", valueOf(before, "rc") == "00")
+    f = f + check("balance.before", valueOf(before, "rc") == "00")
 
     var reqId = "KR-" + seed
     var first = deposit(acctId, "250000", "KOF SALARY", "OPS01", "KCORR" + seed, reqId)
-    failures = failures + check("txn.accepted", first.rc == "00")
-    failures = failures + check("txn.pending", first.status == "VA")
+    f = f + check("txn.accepted", first.rc == "00")
+    f = f + check("txn.pending", first.status == "VA")
 
     var replay = deposit(acctId, "250000", "KOF SALARY", "OPS01", "KCORR" + seed, reqId)
-    failures = failures + check("replay.same.id", replay.id == first.id && replay.rc == "00")
+    f = f + check("replay.same.id", replay.id == first.id && replay.rc == "00")
 
     var conflict = deposit(acctId, "99900", "KOF SALARY TAMPERED", "OPS01", "KCORR" + seed, reqId)
-    failures = failures + check("conflict.rejected", conflict.rc == "26")
+    f = f + check("conflict.rejected", conflict.rc == "26")
 
-    failures = failures + check("txn.authorized", txnRequest("authorize", first.id, "OPS01", "KCORR" + seed, reqId + "-AU").status == "AU")
-    failures = failures + check("txn.posted", txnRequest("post", first.id, "OPS01", "KCORR" + seed, reqId + "-PO").status == "PO")
-    failures = failures + check("txn.settled", txnRequest("settle", first.id, "OPS01", "KCORR" + seed, reqId + "-ST").status == "ST")
-    failures = failures + check("txn.completed", txnRequest("complete", first.id, "OPS01", "KCORR" + seed, reqId + "-CP").status == "CP")
+    f = f + check("txn.authorized", txnRequest("authorize", first.id, "OPS01", "KCORR" + seed, reqId + "-AU").status == "AU")
+    f = f + check("txn.posted", txnRequest("post", first.id, "OPS01", "KCORR" + seed, reqId + "-PO").status == "PO")
+    f = f + check("txn.settled", txnRequest("settle", first.id, "OPS01", "KCORR" + seed, reqId + "-ST").status == "ST")
+    f = f + check("txn.completed", txnRequest("complete", first.id, "OPS01", "KCORR" + seed, reqId + "-CP").status == "CP")
 
     var after = balance(acctId)
-    failures = failures + check("balance.before.value", valueOf(before, "ledger") == "500.00")
-    failures = failures + check("balance.increased", valueOf(after, "ledger") == "250500.00")
+    f = f + check("balance.before.value", valueOf(before, "ledger") == "500.00")
+    f = f + check("balance.increased", valueOf(after, "ledger") == "250500.00")
 
     var lookup = txnRequest("get", first.id, "OPS01", "KCORR" + seed, reqId + "-QRY")
-    failures = failures + check("txn.get.completed", lookup.status == "CP")
+    f = f + check("txn.get.completed", lookup.status == "CP")
 
-    if (failures > 0) {
+    var rec = txnGet(first.id)
+    f = f + check("txn.get.rc", rcOf(rec) == "00")
+    var jref = valueOf(rec, "journal")
+    f = f + check("txn.journal.ref", jref != "")
+
+    var jr = journal(jref)
+    f = f + check("journal.inquiry.rc", rcOf(jr) == "00")
+    f = f + check("journal.balanced", valueOf(jr, "debit") == valueOf(jr, "credit"))
+
+    var tr = trial()
+    f = f + check("trial.rc", rcOf(tr) == "00")
+    f = f + check("trial.conservation", valueOf(tr, "total-debit") == valueOf(tr, "total-credit"))
+
+    var po = postings(acctId)
+    f = f + check("postings.rc", rcOf(po) == "00")
+    f = f + check("postings.count", valueOf(po, "matches") != "")
+
+    var tl = txnList(valueOf(cust, "id"))
+    f = f + check("txn.list.rc", rcOf(tl) == "00")
+    f = f + check("txn.list.contains", tl.text.contains(first.id))
+
+    var co = correlate(first.id)
+    f = f + check("correlate.rc", rcOf(co) == "00")
+    f = f + check("correlate.hit", valueOf(co, "hits") != "" && valueOf(co, "hits") != "00000")
+
+    var ins = opsInspect()
+    f = f + check("ops.inspect.rc", rcOf(ins) == "00")
+    f = f + check("ops.inspect.class", valueOf(ins, "class") != "")
+    f = f + check("ops.inspect.reopen", valueOf(ins, "rec-open") != "")
+
+    var bs = batchStatus("19700101")
+    f = f + check("batch.absent.rc", rcOf(bs) == "22")
+
+    var rev = reverse(first.id, "KOF CORRECTION", "OPS01", "KREV" + seed, reqId + "-RV")
+    f = f + check("reverse.accepted", rev.rc == "00" && rev.status == "RV")
+
+    var revReplay = reverse(first.id, "KOF CORRECTION", "OPS01", "KREV" + seed, reqId + "-RV")
+    f = f + check("reverse.idempotent", revReplay.id == rev.id && revReplay.rc == "00")
+
+    var afterRev = balance(acctId)
+    f = f + check("reverse.restores.balance", valueOf(afterRev, "ledger") == "500.00")
+
+    var trPost = trial()
+    f = f + check("trial.conservation.after.reverse", valueOf(trPost, "total-debit") == valueOf(trPost, "total-credit"))
+
+    var overdraft = withdraw(acctId, "9999999999", "TOO BIG", "OPS01", "KWDR" + seed, reqId + "-WD")
+    f = f + check("business.reject.rc", overdraft.rc == "20")
+    f = f + check("business.reject.reason", overdraft.msg.contains("INSUFFICIENT"))
+
+    var wdReply = raw("txn.create|WITHDRAW|" + acctId + "||9999999999|BRL|TOO BIG2|OPS01|KWDR2|" + reqId + "-WD2")
+    f = f + check("business.reject.clean.exit", wdReply.exit == 0)
+    f = f + check("business.reject.classified", outcome(wdReply) == "REJECT")
+
+    var unknown = raw("txn.create|DEPOSIT||" + acctId + "|100|BRL|UNKNOWN|OPS01|KUNK|" + reqId + "-UNK")
+    f = f + check("unknown.answered", answered(unknown))
+    var reissued = raw("txn.create|DEPOSIT||" + acctId + "|100|BRL|UNKNOWN|OPS01|KUNK|" + reqId + "-UNK")
+    f = f + check("reissue.same.id", valueOf(reissued, "id") == valueOf(unknown, "id") && rcOf(reissued) == "00")
+
+    var missing = rawAt("/nonexistent-path", "system.contract")
+    f = f + check("infra.fail.exit", missing.exit != 0)
+    f = f + check("infra.fail.classified", outcome(missing) == "INFRA_FAIL")
+    f = f + check("infra.fail.operational", operationalFailure(missing))
+    f = f + check("infra.stderr.separated", missing.err != "" && !missing.text.contains("rc="))
+
+    var noReply = raw("customer.list")
+    f = f + check("unknown.reply.safe", operationalFailure(noReply) || outcome(noReply) != "OK")
+
+    if (f > 0) {
         process.exit(1)
     }
     process.exit(0)

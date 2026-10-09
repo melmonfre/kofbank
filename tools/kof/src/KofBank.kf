@@ -1,13 +1,16 @@
-record BankReply(Int exit, String text)
+record BankReply(Int exit, String text, String err)
 
 record TxnReply(String rc, String id, String status, String msg)
 
-BankReply raw(String line) {
-    var home = config.env("BANK_HOME")
+BankReply rawAt(String home, String line) {
     var res = shell.pipeline(listOf(
         listOf("printf", line + "\n"),
         listOf(home + "/build/bank")))
-    return BankReply(res.exitCode, res.stdout)
+    return BankReply(res.exitCode, res.stdout, res.stderr)
+}
+
+BankReply raw(String line) {
+    return rawAt(config.env("BANK_HOME"), line)
 }
 
 String valueOf(BankReply reply, String key) {
@@ -17,6 +20,41 @@ String valueOf(BankReply reply, String key) {
         }
     }
     return ""
+}
+
+String rcOf(BankReply reply) {
+    return valueOf(reply, "rc")
+}
+
+Bool answered(BankReply reply) {
+    return reply.exit == 0 && reply.text.contains("rc=")
+}
+
+String outcome(BankReply reply) {
+    if (reply.exit != 0) {
+        return "INFRA_FAIL"
+    }
+    var rc = rcOf(reply)
+    if (rc == "") {
+        return "NO_REPLY"
+    }
+    if (rc == "00") {
+        return "OK"
+    }
+    if (rc == "24") {
+        return "PENDING"
+    }
+    if (rc == "26") {
+        return "CONFLICT"
+    }
+    if (rc == "35" || rc == "36") {
+        return "INTEGRITY"
+    }
+    return "REJECT"
+}
+
+Bool operationalFailure(BankReply reply) {
+    return reply.exit != 0 || rcOf(reply) == ""
 }
 
 BankReply contract() {
@@ -31,6 +69,65 @@ BankReply balance(String account) {
     return raw("ledger.balance|" + account)
 }
 
+BankReply postings(String account) {
+    return raw("ledger.postings|" + account)
+}
+
+BankReply trial() {
+    return raw("ledger.trial")
+}
+
+BankReply trialBalance() {
+    return raw("ledger.trial")
+}
+
+BankReply journal(String ref) {
+    return raw("ledger.journal|" + ref)
+}
+
+BankReply accountGet(String accountId) {
+    return raw("account.get|" + accountId)
+}
+
+BankReply accountFind(String customerId) {
+    return raw("account.find|" + customerId)
+}
+
+BankReply customerGet(String customerId) {
+    return raw("customer.get|" + customerId)
+}
+
+List<String> listValues(BankReply reply, String key) {
+    var out = listOf<String>()
+    for (var line in reply.text.split("
+")) {
+        if (line.startsWith(key + "=")) {
+            out.add(line.substring((key.length() + 1), line.length()).trim())
+        }
+    }
+    return out
+}
+
+BankReply txnList(String subject) {
+    return raw("txn.list|" + subject)
+}
+
+BankReply txnGet(String txnId) {
+    return raw("txn.get|" + txnId)
+}
+
+BankReply correlate(String ref) {
+    return raw("ops.correlate|" + ref)
+}
+
+BankReply opsInspect() {
+    return raw("ops.inspect")
+}
+
+BankReply batchStatus(String bizDate) {
+    return raw("ops.batch.status|" + bizDate)
+}
+
 TxnReply txnRequest(String op, String txnId, String operator, String correlation, String requestId) {
     var reply = raw("txn." + op + "|" + txnId + "|" + operator + "|" + correlation + "|" + requestId)
     return TxnReply(valueOf(reply, "rc"), txnId, valueOf(reply, "status"), valueOf(reply, "msg"))
@@ -41,10 +138,24 @@ TxnReply deposit(String account, String amount, String description, String opera
     return TxnReply(valueOf(reply, "rc"), valueOf(reply, "id"), valueOf(reply, "status"), valueOf(reply, "msg"))
 }
 
+TxnReply withdraw(String account, String amount, String description, String operator, String correlation, String requestId) {
+    var reply = raw("txn.create|WITHDRAW|" + account + "||" + amount + "|BRL|" + description + "|" + operator + "|" + correlation + "|" + requestId)
+    return TxnReply(valueOf(reply, "rc"), valueOf(reply, "id"), valueOf(reply, "status"), valueOf(reply, "msg"))
+}
+
+TxnReply reverse(String txnId, String reason, String operator, String correlation, String requestId) {
+    var reply = raw("txn.reverse|" + txnId + "|" + reason + "|" + operator + "|" + correlation + "|" + requestId)
+    return TxnReply(valueOf(reply, "rc"), valueOf(reply, "id"), valueOf(reply, "status"), valueOf(reply, "msg"))
+}
+
+BankReply recover(String txnId) {
+    return raw("txn.recover|" + txnId)
+}
+
 BankReply createCustomer(String name, String doc, String operator, String correlation) {
     return raw("customer.create|J|" + name + "|CNPJ|" + doc + "|20261007|" + operator + "|" + correlation)
 }
 
-BankReply openAccount(String customerId, String operator, String correlation) {
-    return raw("account.open|" + customerId + "|DMND|BRL|500.00|" + operator + "|" + correlation + "|KOFV1")
+BankReply openAccount(String customerId, String operator, String correlation, String requestId) {
+    return raw("account.open|" + customerId + "|DMND|BRL|500.00|" + operator + "|" + correlation + "|" + requestId)
 }

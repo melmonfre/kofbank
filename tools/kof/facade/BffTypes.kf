@@ -1,0 +1,378 @@
+record AuthRequest(String username, String secret)
+
+record AuthResponse(String token, String username, String customerId, Bool authenticated)
+
+record AccountDto(String id, String customerId, String product, String currency, String status, String opened)
+
+record BalanceDto(String accountId, String ledger, String available, String blocked, String currency, String authority)
+
+record TxnDto(String id, String type, String status, String amount, String currency, String source, String destination, String created)
+
+record TxnDetailDto(String id, String type, String status, String amount, String currency, String source, String destination, String origin, String reason, String journalRef, String created)
+
+record HealthResponse(String status, String coreClass, String appVersion)
+
+record DepositRequest(String amount, String description, String requestId, String correlationId)
+
+record OpResponse(String status, String txnId, String message, String correlationId)
+
+record AppError(String error, String message, String category, String coreRc, String coreMsg, String correlationId, Bool retryable)
+
+String appVersion() {
+    return "KBAPP-1"
+}
+
+String devSecret(String username) {
+    if (username == "ana") {
+        return "kof-demo-ana"
+    }
+    if (username == "bob") {
+        return "kof-demo-bob"
+    }
+    return ""
+}
+
+String devCustomer(String username) {
+    if (username == "ana") {
+        return "C00000000001"
+    }
+    if (username == "bob") {
+        return "C00000000002"
+    }
+    return ""
+}
+
+record Identity(Bool ok, String username, String customerId, String reason)
+
+String tokenFor(String username, String secret) {
+    if (devSecret(username) == "") {
+        return ""
+    }
+    if (secret != devSecret(username)) {
+        return ""
+    }
+    return "SES." + username + "." + devCustomer(username)
+}
+
+String fieldOf(String token, Int index, String missing) {
+    var out = ""
+    var seen = 0
+    var n = token.length()
+    for (var i = 0; i < n; i++) {
+        var ch = token.substring(i, i + 1)
+        if (ch == ".") {
+            seen = seen + 1
+        } else if (seen == index) {
+            out = out + ch
+        }
+    }
+    if (seen < index) {
+        return missing
+    }
+    return out
+}
+
+Identity identify(String? rawToken) {
+    if (rawToken == null) {
+        return Identity(false, "", "", "missing or invalid session token")
+    }
+    var token = rawToken.trim()
+    var dots = 0
+    var tn = token.length()
+    for (var i = 0; i < tn; i++) {
+        if (token.substring(i, i + 1) == ".") {
+            dots = dots + 1
+        }
+    }
+    if (token.startsWith("SES.") && dots == 2) {
+        var user = fieldOf(token, 1, "")
+        var cust = fieldOf(token, 2, "")
+        if (devCustomer(user) == cust) {
+            var check = customerGet(cust)
+            if (rcOf(check) == "00") {
+                return Identity(true, user, cust, "")
+            }
+            return Identity(false, "", "", "subject not present in core")
+        }
+    }
+    return Identity(false, "", "", "missing or invalid session token")
+}
+
+String errJson(String error, String message, String category, String coreRc, String coreMsg, String corr, Bool retryable) {
+    return json.encode(AppError(error, message, category, coreRc, coreMsg, corr, retryable))
+}
+
+String mapCoreToHttp(BankReply reply, String corr) {
+    if (reply.exit != 0) {
+        return status(503, errJson("BACKEND_UNAVAILABLE", "core process failed", "INFRASTRUCTURE", "", "exit " + reply.exit, corr, true))
+    }
+    var rc = rcOf(reply)
+    if (rc == "") {
+        return status(502, errJson("BAD_GATEWAY_REPLY", "core returned no rc", "INFRASTRUCTURE", "", "", corr, true))
+    }
+    if (rc == "00") {
+        return ""
+    }
+    if (rc == "20") {
+        return status(400, errJson("INVALID_REQUEST", valueOf(reply, "msg"), "VALIDATION", rc, valueOf(reply, "msg"), corr, false))
+    }
+    if (rc == "22") {
+        return status(422, errJson("BUSINESS_REJECTION", valueOf(reply, "msg"), "BUSINESS", rc, valueOf(reply, "msg"), corr, false))
+    }
+    if (rc == "23") {
+        return status(404, errJson("NOT_FOUND", valueOf(reply, "msg"), "NOT_FOUND", rc, valueOf(reply, "msg"), corr, false))
+    }
+    if (rc == "24") {
+        return status(504, errJson("UNKNOWN_OUTCOME", "outcome not yet decided or in doubt; re-check by request identity, never blind-retry", "UNKNOWN", rc, valueOf(reply, "msg"), corr, false))
+    }
+    if (rc == "26") {
+        return status(409, errJson("IDEMPOTENCY_CONFLICT", "payload differs under known request identity", "CONFLICT", rc, valueOf(reply, "msg"), corr, false))
+    }
+    if (rc == "35" || rc == "36") {
+        return status(500, errJson("INTEGRITY_INCIDENT", "core integrity state requires operations attention", "INTEGRITY", rc, valueOf(reply, "msg"), corr, false))
+    }
+    return status(500, errJson("UNCLASSIFIED_CORE_RC", "unexpected core return code", "INFRASTRUCTURE", rc, valueOf(reply, "msg"), corr, false))
+}
+
+record MapLine(Bool ok, Map<String, String> values, String reason)
+
+Bool looksJson(String? body) {
+    if (body == null) {
+        return false
+    }
+    var b = body.trim()
+    if (b.length() < 2) {
+        return false
+    }
+    if (!b.startsWith("{")) {
+        return false
+    }
+    if (!b.endsWith("}")) {
+        return false
+    }
+    return true
+}
+
+Map<String, String> flatJsonToMap(String? body) {
+    var out = mapOf<String, String>()
+    if (body == null) {
+        return out
+    }
+    var s = body.trim()
+    s = s.substring(1, s.length() - 1)
+    var i = 0
+    var n = s.length()
+    while (i < n) {
+        var ch = s.substring(i, i + 1)
+        if (ch == " " || ch == ",") {
+            i = i + 1
+        } else if (ch == "\"") {
+            var keyStart = i + 1
+            var keyEnd = keyStart
+            while (keyEnd < n && s.substring(keyEnd, keyEnd + 1) != "\"") {
+                keyEnd = keyEnd + 1
+            }
+            if (keyEnd >= n) {
+                return mapOf<String, String>()
+            }
+            var key = s.substring(keyStart, keyEnd)
+            var j = keyEnd + 1
+            while (j < n && (s.substring(j, j + 1) == " " || s.substring(j, j + 1) == ":")) {
+                j = j + 1
+            }
+            if (j >= n) {
+                return mapOf<String, String>()
+            }
+            var value = ""
+            if (s.substring(j, j + 1) == "\"") {
+                var vStart = j + 1
+                var vEnd = vStart
+                while (vEnd < n && s.substring(vEnd, vEnd + 1) != "\"") {
+                    vEnd = vEnd + 1
+                }
+                if (vEnd >= n) {
+                    return mapOf<String, String>()
+                }
+                value = s.substring(vStart, vEnd)
+                i = vEnd + 1
+            } else {
+                var vStart = j
+                var vEnd = vStart
+                while (vEnd < n && s.substring(vEnd, vEnd + 1) != ",") {
+                    vEnd = vEnd + 1
+                }
+                value = s.substring(vStart, vEnd).trim()
+                i = vEnd
+            }
+            out.put(key, value)
+        } else {
+            return mapOf<String, String>()
+        }
+    }
+    return out
+}
+
+String mapGet(Map<String, String> m, String key) {
+    var v = m.get(key)
+    if (v == null) {
+        return ""
+    }
+    return v
+}
+
+record Rec(Bool ok, String amount, String description, String requestId, String correlationId, String reason)
+
+Rec parseDepositBody(String? body) {
+    var m = mapOf<String, String>()
+    if (looksJson(body)) {
+        m = flatJsonToMap(body)
+    }
+    var amount = mapGet(m, "amount")
+    var description = mapGet(m, "description")
+    var requestId = mapGet(m, "requestId")
+    var correlationId = mapGet(m, "correlationId")
+    if (!looksJson(body)) {
+        return Rec(false, "", "", "", correlationId, "malformed json body")
+    }
+    if (amount == "" || requestId == "") {
+        return Rec(false, "", "", "", correlationId, "amount and requestId are required")
+    }
+    if (!numericText(amount)) {
+        return Rec(false, "", "", "", correlationId, "amount must be integer cents")
+    }
+    if (!requestIdOk(requestId)) {
+        return Rec(false, "", "", "", correlationId, "requestId must be safe printable text up to 40 chars")
+    }
+    if (correlationId != "" && !requestIdOk(correlationId)) {
+        return Rec(false, "", "", "", correlationId, "correlationId must be safe printable text up to 40 chars")
+    }
+    if (!safeText(description, 30)) {
+        return Rec(false, "", "", "", correlationId, "description must be safe text up to 30 chars")
+    }
+    return Rec(true, amount, description, requestId, correlationId, "")
+}
+
+Bool numericText(String v) {
+    if (v == "") {
+        return false
+    }
+    var n2 = v.length()
+    for (var i = 0; i < n2; i++) {
+        if (!strings.isNumeric(v.substring(i, i + 1))) {
+            return false
+        }
+    }
+    return true
+}
+
+record KV(Bool ok, String src, String dst, String id)
+
+String squash(String input) {
+    var out = ""
+    var prevSpace = false
+    var n = input.length()
+    for (var i = 0; i < n; i++) {
+        var ch = input.substring(i, i + 1)
+        if (ch == " ") {
+            if (!prevSpace) {
+                out = out + ch
+            }
+            prevSpace = true
+        } else {
+            out = out + ch
+            prevSpace = false
+        }
+    }
+    return out.trim()
+}
+
+KV parseTxnLine(String rawLine) {
+    var line = squash(rawLine)
+    if (!line.startsWith("id=")) {
+        return KV(false, "", "", "")
+    }
+    var f = scanFields(line)
+    return KV(true, mapGet(f, "src"), mapGet(f, "dst"), mapGet(f, "id"))
+}
+
+Map<String, String> scanFields(String rawLine) {
+    var line = squash(rawLine)
+    var out = mapOf<String, String>()
+    var pendingKey = ""
+    for (var part in line.split(" ")) {
+        var t = part
+        if (t == "") {
+            continue
+        }
+        if (pendingKey != "" && !t.contains("=")) {
+            out.put(pendingKey, t)
+            pendingKey = ""
+            continue
+        }
+        if (pendingKey != "") {
+            out.put(pendingKey, "")
+            pendingKey = ""
+        }
+        if (t.contains("=")) {
+            var eq = t.indexOf("=")
+            var key = t.substring(0, eq)
+            var vtext = t.substring(eq + 1, t.length())
+            if (vtext == "") {
+                pendingKey = key
+            } else {
+                out.put(key, vtext)
+            }
+        }
+    }
+    return out
+}
+
+String kv(String rawLine, String key) {
+    return mapGet(scanFields(rawLine), key)
+}
+
+Bool shapeOk(String v, String prefix, Int size) {
+    if (v.length() != size) {
+        return false
+    }
+    if (!v.startsWith(prefix)) {
+        return false
+    }
+    for (var i = 1; i < size; i++) {
+        if (!strings.isNumeric(v.substring(i, i + 1))) {
+            return false
+        }
+    }
+    return true
+}
+
+Bool accountIdOk(String v) {
+    return shapeOk(v, "A", 12)
+}
+
+Bool txnIdOk(String v) {
+    return shapeOk(v, "T", 13)
+}
+
+Bool safeText(String v, Int maxLen) {
+    if (v.length() > maxLen) {
+        return false
+    }
+    if (v.contains("|")) {
+        return false
+    }
+    if (v.contains("\n")) {
+        return false
+    }
+    if (v.contains("\r")) {
+        return false
+    }
+    return true
+}
+
+Bool requestIdOk(String v) {
+    if (v == "") {
+        return false
+    }
+    return safeText(v, 40)
+}

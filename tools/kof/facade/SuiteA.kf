@@ -1,0 +1,44 @@
+main() {
+    var f = 0
+    seedFacade()
+    spawn serveOn(8981)
+    time.sleep(400)
+    var health = g("http://127.0.0.1:8981", "/api/health", "NOAUTH")
+        f = f + tcheck("health.up", health.contains("\"status\":\"UP\"") && health.contains("KBAPP-1"))
+    var badLogin = p("http://127.0.0.1:8981", "/api/auth/login", "NOAUTH", "{\"username\":\"ana\",\"secret\":\"wrong\"}")
+        f = f + tcheck("login.bad.credential", badLogin.contains("INVALID_CREDENTIALS") && badLogin.contains("\"retryable\":false"))
+
+        var goodLogin = p("http://127.0.0.1:8981", "/api/auth/login", "NOAUTH", "{\"username\":\"ana\",\"secret\":\"kof-demo-ana\"}")
+        f = f + tcheck("login.ok", goodLogin.contains(ANA_TOK()) && goodLogin.contains("\"authenticated\":true"))
+    var noAuth = g("http://127.0.0.1:8981", "/api/accounts", "NOAUTH")
+        f = f + tcheck("accounts.unauth", noAuth.contains("UNAUTHENTICATED"))
+
+        var accounts = g("http://127.0.0.1:8981", "/api/accounts", ANA_TOK())
+        f = f + tcheck("accounts.list", accounts.contains("A00000000001"))
+        f = f + tcheck("accounts.isolation", !accounts.contains("A00000000002"))
+    var one = g("http://127.0.0.1:8981", "/api/accounts/A00000000001", ANA_TOK())
+        f = f + tcheck("account.get", one.contains("\"product\":\"DMND\"") && one.contains("C00000000001"))
+
+        var foreign = g("http://127.0.0.1:8981", "/api/accounts/A00000000002", ANA_TOK())
+        f = f + tcheck("account.forbidden", foreign.contains("FORBIDDEN"))
+    var missing = g("http://127.0.0.1:8981", "/api/accounts/A00000000099/balance", ANA_TOK())
+        f = f + tcheck("balance.notfound", missing.contains("ACCOUNT_NOT_FOUND") && missing.contains("\"coreRc\":\"23\""))
+
+        var bal = g("http://127.0.0.1:8981", "/api/accounts/A00000000001/balance", ANA_TOK())
+        var coreBal = balance("A00000000001")
+        f = f + tcheck("balance.authoritative", bal.contains("\"ledger\":\"" + valueOf(coreBal, "ledger") + "\""))
+        f = f + tcheck("balance.authority.tag", bal.contains("COBOL-BGLBAL"))
+    var hist = g("http://127.0.0.1:8981", "/api/accounts/A00000000001/transactions", ANA_TOK())
+        f = f + tcheck("history.has.seed", hist.contains("T00000000001"))
+        f = f + tcheck("history.isolated", !hist.contains("T00000000002"))
+        f = f + tcheck("history.amount.parsed", hist.contains("\"amount\":\"250000.00\""))
+
+        var emptyHist = g("http://127.0.0.1:8981", "/api/accounts/A00000000003/transactions", "SES.carl.C00000000003")
+        f = f + tcheck("token.unknown.subject", emptyHist.contains("UNAUTHENTICATED"))
+    if (f > 0) {
+        println("suiteA: " + f + " failed")
+        process.exit(1)
+    }
+    println("suiteA: passed")
+    process.exit(0)
+}

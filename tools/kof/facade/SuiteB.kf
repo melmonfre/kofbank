@@ -1,0 +1,43 @@
+main() {
+    var f = 0
+    spawn serveOn(8982)
+    time.sleep(400)
+    var detail = g("http://127.0.0.1:8982", "/api/transactions/T00000000001", ANA_TOK())
+        f = f + tcheck("detail.ok", detail.contains("\"journalRef\":\"TXNT00000000001-P\""))
+        var detailForeign = g("http://127.0.0.1:8982", "/api/transactions/T00000000002", ANA_TOK())
+        f = f + tcheck("detail.forbidden", detailForeign.contains("FORBIDDEN"))
+        var detailMissing = g("http://127.0.0.1:8982", "/api/transactions/T99999999999", ANA_TOK())
+        f = f + tcheck("detail.notfound", detailMissing.contains("NOT_FOUND") && detailMissing.contains("\"coreRc\":\"23\""))
+    var depBody = "{\"amount\":\"50000\",\"description\":\"HTTP SALARY\",\"requestId\":\"KOF-HTTP-D1\",\"correlationId\":\"KOF-HTTP-C1\"}"
+        var beforeBal = g("http://127.0.0.1:8982", "/api/accounts/A00000000001/balance", ANA_TOK())
+        var dep1 = p("http://127.0.0.1:8982", "/api/accounts/A00000000001/deposits", ANA_TOK(), depBody)
+        f = f + tcheck("deposit.completed", dep1.contains("\"status\":\"COMPLETED\"") && dep1.contains("\"correlationId\":\"KOF-HTTP-C1\""))
+        var afterBal = g("http://127.0.0.1:8982", "/api/accounts/A00000000001/balance", ANA_TOK())
+        f = f + tcheck("deposit.raised.balance", afterBal != beforeBal && !afterBal.contains("error"))
+        var coreAfter = balance("A00000000001")
+        f = f + tcheck("deposit.core.match", afterBal.contains("\"ledger\":\"" + valueOf(coreAfter, "ledger") + "\""))
+
+        var depReplay = p("http://127.0.0.1:8982", "/api/accounts/A00000000001/deposits", ANA_TOK(), depBody)
+        f = f + tcheck("deposit.replay.same.txn", depReplay.contains("\"txnId\":\"T00000000003\""))
+        var afterReplay = g("http://127.0.0.1:8982", "/api/accounts/A00000000001/balance", ANA_TOK())
+        f = f + tcheck("deposit.replay.no.double", afterReplay == afterBal)
+    var depTamper = p("http://127.0.0.1:8982", "/api/accounts/A00000000001/deposits", ANA_TOK(), "{\"amount\":\"99999\",\"description\":\"HTTP SALARY\",\"requestId\":\"KOF-HTTP-D1\",\"correlationId\":\"KOF-HTTP-C1\"}")
+        f = f + tcheck("deposit.tamper.conflict", depTamper.contains("IDEMPOTENCY_CONFLICT") && depTamper.contains("\"coreRc\":\"26\"") && depTamper.contains("KOF-HTTP-C1"))
+        f = f + tcheck("deposit.tamper.notretryable", depTamper.contains("\"retryable\":false"))
+    var badAmount = p("http://127.0.0.1:8982", "/api/accounts/A00000000001/deposits", ANA_TOK(), "{\"amount\":\"1.5\",\"description\":\"X\",\"requestId\":\"KOF-HTTP-D2\",\"correlationId\":\"KOF-HTTP-C2\"}")
+        f = f + tcheck("deposit.badamount", badAmount.contains("INVALID_DEPOSIT_BODY"))
+        var malformed = p("http://127.0.0.1:8982", "/api/accounts/A00000000001/deposits", ANA_TOK(), "<html>not json</html>")
+        f = f + tcheck("deposit.malformed", malformed.contains("malformed json body"))
+        var missingFields = p("http://127.0.0.1:8982", "/api/accounts/A00000000001/deposits", ANA_TOK(), "{\"description\":\"X\"}")
+        f = f + tcheck("deposit.required", missingFields.contains("amount and requestId are required"))
+    var overDraft = p("http://127.0.0.1:8982", "/api/accounts/A00000000001/deposits", "SES.bob.C00000000002", "{\"amount\":\"1\",\"description\":\"X\",\"requestId\":\"KOF-HTTP-D3\",\"correlationId\":\"KOF-HTTP-C3\"}")
+        f = f + tcheck("deposit.foreign.forbidden", overDraft.contains("FORBIDDEN"))
+    var cleanB = opsInspect()
+    f = f + tcheck("store.clean.after.deposits", valueOf(cleanB, "class") == "CLEAN")
+    if (f > 0) {
+        println("suiteB: " + f + " failed")
+        process.exit(1)
+    }
+    println("suiteB: passed")
+    process.exit(0)
+}

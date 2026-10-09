@@ -48,6 +48,12 @@ check "customer.create" "C00000000001" "$(value "$out" id=)"
 
 out=$(bank "account.open|C00000000001|DMND|BRL|500000|OP01|R2|O1")
 check "account.open" "A00000000001" "$(value "$out" id=)"
+out=$(bank "account.find|C00000000001")
+check "account.find.rc" "00" "$(value "$out" rc=)"
+check "account.find.count" "000001" "$(value "$out" count=)"
+check "account.find.id" "A00000000001" "$(printf '%s' "$out" | grep '^id=' | head -1 | cut -d' ' -f1 | sed 's/^id=//')"
+out=$(bank "account.find|C99999999999")
+check "account.find.none" "000000" "$(value "$out" count=)"
 
 mkdir -p tests/fixtures
 printf 'JRNA00000000001|500000.00|BRL|20261002\n' > tests/fixtures/ext_ok.dat
@@ -68,6 +74,9 @@ out=$(bank "ledger.balance|A00000000001")
 check "txn.deposit.posted" "750000.00" "$(value "$out" ledger=)"
 out=$(bank "txn.complete|T00000000001|OP01|R3|D5")
 check "txn.complete" "CP" "$(value "$out" status=)"
+out=$(bank "txn.list")
+check "txn.list.dst" "yes" "$(printf '%s' "$out" | grep -q 'dst=A00000000001' && echo yes || echo no)"
+check "txn.list.created" "yes" "$(printf '%s' "$out" | grep -q ' created=[0-9]' && echo yes || echo no)"
 out=$(bank "txn.get|T00000000001")
 check "txn.get.status" "CP" "$(value "$out" status=)"
 check "txn.get.type" "DEPOSIT" "$(value "$out" type=)"
@@ -4015,6 +4024,27 @@ grep -q "^environment=LOCAL_DOUBLE" etc/pix.cfg
 check "g5.restored.env" "yes" "$([ $? -eq 0 ] && echo yes || echo no)"
 check "g5.pix.cfg.intact" "yes" "$(cmp -s etc/pix.cfg "$PIX_BAK" && echo yes || echo no)"
 rm -f "$PIX_BAK"
+
+
+# ---- TRANSFER-FUND-DIRECTION (V-TRANSFER must debit-check SOURCE) ----
+reset
+bank "ledger.init" >/dev/null
+bank "customer.create|P|TD RICH|CPF|33333333331|19900101|OP01|TD1" >/dev/null
+bank "customer.create|P|TD POOR|CPF|33333333332|19900102|OP01|TD2" >/dev/null
+bank "account.open|C00000000001|DMND|BRL|100000|OP01|TD3|TDA1" >/dev/null
+bank "account.open|C00000000002|DMND|BRL|100|OP01|TD4|TDA2" >/dev/null
+out=$(bank "txn.create|TRANSFER|A00000000001|A00000000002|50000|BRL|TDUP|OP01|TD5|TDQ1")
+check "txn.xfer.richsrc.rc" "00" "$(value "$out" rc=)"
+tid=$(value "$out" id=)
+check "txn.xfer.richsrc.ok" "00" "$(value "$(bank "txn.authorize|$tid|OP01|TD6|TDQ2")" rc=)"
+out=$(bank "txn.create|TRANSFER|A00000000002|A00000000001|50000|BRL|TDDN|OP01|TD7|TDQ3")
+check "txn.xfer.poorsrc.reject" "20" "$(value "$out" rc=)"
+check "txn.xfer.poorsrc.msg" "INSUFFICIENT FUNDS" "$(sed -n "s/^msg=//p" <<<"$out" | head -1 | sed "s/ *$//")"
+out=$(bank "txn.create|TRANSFER|A00000000001|A00000000001|10|BRL|TDSF|OP01|TD8|TDQ4")
+check "txn.xfer.self.reject" "20" "$(value "$out" rc=)"
+check "txn.xfer.self.msg" "SOURCE AND DESTINATION MUST DIFFER" "$(sed -n "s/^msg=//p" <<<"$out" | head -1 | sed "s/ *$//")"
+out=$(bank "txn.create|TRANSFER|A00000000001|A00000000099|10|BRL|TDBD|OP01|TD9|TDQ5")
+check "txn.xfer.baddst.reject" "20" "$(value "$out" rc=)"
 
 echo "tests: $((PASS + FAIL)) passed: $PASS failed: $FAIL"
 [ "$FAIL" -eq 0 ]

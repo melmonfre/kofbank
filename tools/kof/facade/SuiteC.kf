@@ -1,0 +1,28 @@
+main() {
+    var f = 0
+    spawn serveOn(8983)
+    time.sleep(400)
+    var boundaryFail = rawAt("/nonexistent-path", "system.contract")
+        f = f + tcheck("boundary.infra.classified", outcome(boundaryFail) == "INFRA_FAIL" && operationalFailure(boundaryFail))
+    var viewUnknown = viewFrom("{\"error\":\"UNKNOWN_OUTCOME\",\"category\":\"UNKNOWN\"}")
+        f = f + tcheck("view.unknown", viewUnknown.state == "UNKNOWN_OPERATION")
+        var viewErr = viewFrom("{\"error\":\"NOT_FOUND\"}")
+        f = f + tcheck("view.error", viewErr.state == "ERROR")
+        var viewEmpty = viewFrom("[]")
+        f = f + tcheck("view.empty", viewEmpty.state == "EMPTY")
+        var viewReady = viewFrom("{\"ledger\":\"3000.00\"}")
+        f = f + tcheck("view.ready", viewReady.state == "READY")
+        var viewLoading = renderLoading("balance").state
+        f = f + tcheck("view.loading", viewLoading == "LOADING")
+    var clean = opsInspect()
+        f = f + tcheck("store.clean.after.slice", valueOf(clean, "class") == "CLEAN" && valueOf(clean, "txn-pend") == "00000")
+
+        var trial = trialBalance()
+        f = f + tcheck("ledger.conserved", rcOf(trial) == "00" && valueOf(trial, "total-debit") == valueOf(trial, "total-credit"))
+    if (f > 0) {
+        println("suiteC: " + f + " failed")
+        process.exit(1)
+    }
+    println("suiteC: passed")
+    process.exit(0)
+}

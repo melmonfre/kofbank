@@ -1,0 +1,92 @@
+record UiView(String state, String title, String body)
+
+UiView viewFrom(String payload) {
+    if (payload.contains("\"UNKNOWN_OUTCOME\"") || payload.contains("\"category\":\"UNKNOWN\"")) {
+        return UiView("UNKNOWN_OPERATION", "Result not confirmed - do not retry blindly", payload)
+    }
+    if (payload.contains("\"BACKEND_UNAVAILABLE\"") || payload.contains("\"BAD_GATEWAY_REPLY\"") || payload.contains("\"category\":\"INFRASTRUCTURE\"")) {
+        return UiView("INFRA_ERROR", "Service temporarily unavailable", payload)
+    }
+    if (payload.contains("\"error\"")) {
+        return UiView("ERROR", "Request could not be completed", payload)
+    }
+    if (payload.trim() == "[]" || payload.trim() == "") {
+        return UiView("EMPTY", "Nothing here yet", payload)
+    }
+    return UiView("READY", "Account data", payload)
+}
+
+record PortalSession(String base, String token, Bool loggedIn)
+
+PortalSession portalNew(String base) {
+    return PortalSession(base, "", false)
+}
+
+String portalLogin(PortalSession s, String username, String secret) {
+    return http.post(s.base() + "/api/auth/login", "{\"username\":\"" + username + "\",\"secret\":\"" + secret + "\"}", "Content-Type: application/json")
+}
+
+String portalAccounts(PortalSession s) {
+    return http.get(s.base() + "/api/accounts", "X-Session-Token: " + s.token())
+}
+
+String portalBalance(PortalSession s, String accountId) {
+    return http.get(s.base() + "/api/accounts/" + accountId + "/balance", "X-Session-Token: " + s.token())
+}
+
+String portalHistory(PortalSession s, String accountId) {
+    return http.get(s.base() + "/api/accounts/" + accountId + "/transactions", "X-Session-Token: " + s.token())
+}
+
+String portalDetail(PortalSession s, String txnId) {
+    return http.get(s.base() + "/api/transactions/" + txnId, "X-Session-Token: " + s.token())
+}
+
+UiView renderLoading(String what) {
+    return UiView("LOADING", what, "")
+}
+
+Void showView(String screen, UiView v) {
+    println("[" + screen + "] state=" + v.state() + " title=" + v.title())
+    if (v.state() == "READY" || v.state() == "ERROR" || v.state() == "UNKNOWN_OPERATION" || v.state() == "INFRA_ERROR" || v.state() == "EMPTY") {
+        println("  body: " + v.body())
+    }
+}
+
+Void portalDemo() {
+    var base = "http://127.0.0.1:" + config.int("server.port", 8977)
+    println("portal: starting demo against " + base)
+    var s = portalNew(base)
+    var loginBody = portalLogin(s, "ana", "wrong-secret")
+    showView("login-attempt", viewFrom(loginBody))
+    loginBody = portalLogin(s, "ana", "kof-demo-ana")
+    var loginView = viewFrom(loginBody)
+    showView("login", loginView)
+    if (loginView.state() != "READY") {
+        println("portal: login failed, is the BFF running (make kof-portal)?")
+        process.exit(1)
+    }
+    var token = ""
+    var marker = "\"token\":\"SES."
+    if (loginBody.contains(marker)) {
+        var rest = loginBody.substring(loginBody.indexOf(marker) + 9, loginBody.length())
+        var stop = rest.indexOf("\"")
+        token = rest.substring(0, stop)
+    }
+    s = PortalSession(base, token, true)
+    showView("accounts", viewFrom(portalAccounts(s)))
+    var acct = "A00000000001"
+    println("loading: " + renderLoading("balance of " + acct).state())
+    showView("balance", viewFrom(portalBalance(s, acct)))
+    showView("history", viewFrom(portalHistory(s, acct)))
+    var hist = portalHistory(s, acct)
+    if (hist.contains("\"id\":\"T")) {
+        var rest2 = hist.substring(hist.indexOf("\"id\":\"T") + 7, hist.length())
+        var stop2 = rest2.indexOf("\"")
+        var txnId = "T" + rest2.substring(0, stop2)
+        showView("detail", viewFrom(portalDetail(s, txnId)))
+    } else {
+        showView("detail", UiView("EMPTY", "select a transaction first", ""))
+    }
+    process.exit(0)
+}

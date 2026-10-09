@@ -1,0 +1,8 @@
+Int tcheck(String name, Bool cond) {
+    if (cond) {
+        println("ok   " + name)
+        return 0
+    }
+    println("FAIL " + name)
+    return 1
+}

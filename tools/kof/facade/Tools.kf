@@ -1,0 +1,49 @@
+Int tcheck(String name, Bool cond) {
+    if (cond) {
+        println("ok   " + name)
+        return 0
+    }
+    println("FAIL " + name)
+    return 1
+}
+
+String g(String base, String path, String token) {
+    if (token == "NOAUTH") {
+        return http.get(base + path)
+    }
+    return http.get(base + path, "X-Session-Token: " + token)
+}
+
+String p(String base, String path, String token, String body) {
+    if (token == "NOAUTH") {
+        return http.post(base + path, body, "Content-Type: application/json")
+    }
+    return http.post(base + path, body, "Content-Type: application/json", "X-Session-Token: " + token)
+}
+
+Void seedFacade() {
+    var c1 = createCustomer("ANA CANON", "61010101000101", "SEED", "SEED-A")
+    var c2 = createCustomer("BOB CANON", "61010101000290", "SEED", "SEED-B")
+    var c3 = createCustomer("CARL CANON", "61010101000373", "SEED", "SEED-C")
+    openAccount(valueOf(c1, "id"), "SEED", "SEED-AA", "SEED-RA")
+    openAccount(valueOf(c2, "id"), "SEED", "SEED-BA", "SEED-RB")
+    openAccount(valueOf(c3, "id"), "SEED", "SEED-CA", "SEED-RC")
+    var d1 = deposit("A00000000001", "250000", "SEED SALARY", "SEED", "SEED-D1", "SEED-REQ1")
+    txnRequest("authorize", d1.id, "SEED", "SEED-D1", "SEED-REQ2")
+    txnRequest("post", d1.id, "SEED", "SEED-D1", "SEED-REQ3")
+    txnRequest("settle", d1.id, "SEED", "SEED-D1", "SEED-REQ4")
+    txnRequest("complete", d1.id, "SEED", "SEED-D1", "SEED-REQ5")
+    var d2 = deposit("A00000000002", "80000", "SEED FREELANCE", "SEED", "SEED-D2", "SEED-REQ6")
+    txnRequest("authorize", d2.id, "SEED", "SEED-D2", "SEED-REQ7")
+    txnRequest("post", d2.id, "SEED", "SEED-D2", "SEED-REQ8")
+    txnRequest("settle", d2.id, "SEED", "SEED-D2", "SEED-REQ9")
+    txnRequest("complete", d2.id, "SEED", "SEED-D2", "SEED-REQ10")
+}
+
+String ANA_TOK() {
+    return "SES.ana.C00000000001"
+}
+
+String BOB_TOK() {
+    return "SES.bob.C00000000002"
+}

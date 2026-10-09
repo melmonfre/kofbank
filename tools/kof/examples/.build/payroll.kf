@@ -1,0 +1,248 @@
+record BankReply(Int exit, String text, String err)
+
+record TxnReply(String rc, String id, String status, String msg)
+
+BankReply rawAt(String home, String line) {
+    var res = shell.pipeline(listOf(
+        listOf("printf", line + "\n"),
+        listOf(home + "/build/bank")))
+    return BankReply(res.exitCode, res.stdout, res.stderr)
+}
+
+BankReply raw(String line) {
+    return rawAt(config.env("BANK_HOME"), line)
+}
+
+String valueOf(BankReply reply, String key) {
+    for (var line in reply.text.split("\n")) {
+        if (line.startsWith(key + "=")) {
+            return line.substring((key.length() + 1), line.length()).trim()
+        }
+    }
+    return ""
+}
+
+String rcOf(BankReply reply) {
+    return valueOf(reply, "rc")
+}
+
+Bool answered(BankReply reply) {
+    return reply.exit == 0 && reply.text.contains("rc=")
+}
+
+String outcome(BankReply reply) {
+    if (reply.exit != 0) {
+        return "INFRA_FAIL"
+    }
+    var rc = rcOf(reply)
+    if (rc == "") {
+        return "NO_REPLY"
+    }
+    if (rc == "00") {
+        return "OK"
+    }
+    if (rc == "24") {
+        return "PENDING"
+    }
+    if (rc == "26") {
+        return "CONFLICT"
+    }
+    if (rc == "35" || rc == "36") {
+        return "INTEGRITY"
+    }
+    return "REJECT"
+}
+
+Bool operationalFailure(BankReply reply) {
+    return reply.exit != 0 || rcOf(reply) == ""
+}
+
+BankReply contract() {
+    return raw("system.contract")
+}
+
+BankReply health() {
+    return raw("ops.health")
+}
+
+BankReply balance(String account) {
+    return raw("ledger.balance|" + account)
+}
+
+BankReply postings(String account) {
+    return raw("ledger.postings|" + account)
+}
+
+BankReply trial() {
+    return raw("ledger.trial")
+}
+
+BankReply journal(String ref) {
+    return raw("ledger.journal|" + ref)
+}
+
+BankReply txnList() {
+    return raw("txn.list")
+}
+
+BankReply txnGet(String txnId) {
+    return raw("txn.get|" + txnId)
+}
+
+BankReply correlate(String ref) {
+    return raw("ops.correlate|" + ref)
+}
+
+BankReply opsInspect() {
+    return raw("ops.inspect")
+}
+
+BankReply batchStatus(String bizDate) {
+    return raw("ops.batch.status|" + bizDate)
+}
+
+TxnReply txnRequest(String op, String txnId, String operator, String correlation, String requestId) {
+    var reply = raw("txn." + op + "|" + txnId + "|" + operator + "|" + correlation + "|" + requestId)
+    return TxnReply(valueOf(reply, "rc"), txnId, valueOf(reply, "status"), valueOf(reply, "msg"))
+}
+
+TxnReply deposit(String account, String amount, String description, String operator, String correlation, String requestId) {
+    var reply = raw("txn.create|DEPOSIT||" + account + "|" + amount + "|BRL|" + description + "|" + operator + "|" + correlation + "|" + requestId)
+    return TxnReply(valueOf(reply, "rc"), valueOf(reply, "id"), valueOf(reply, "status"), valueOf(reply, "msg"))
+}
+
+TxnReply withdraw(String account, String amount, String description, String operator, String correlation, String requestId) {
+    var reply = raw("txn.create|WITHDRAW|" + account + "||" + amount + "|BRL|" + description + "|" + operator + "|" + correlation + "|" + requestId)
+    return TxnReply(valueOf(reply, "rc"), valueOf(reply, "id"), valueOf(reply, "status"), valueOf(reply, "msg"))
+}
+
+TxnReply reverse(String txnId, String reason, String operator, String correlation, String requestId) {
+    var reply = raw("txn.reverse|" + txnId + "|" + reason + "|" + operator + "|" + correlation + "|" + requestId)
+    return TxnReply(valueOf(reply, "rc"), valueOf(reply, "id"), valueOf(reply, "status"), valueOf(reply, "msg"))
+}
+
+BankReply recover(String txnId) {
+    return raw("txn.recover|" + txnId)
+}
+
+BankReply createCustomer(String name, String doc, String operator, String correlation) {
+    return raw("customer.create|J|" + name + "|CNPJ|" + doc + "|20261007|" + operator + "|" + correlation)
+}
+
+BankReply openAccount(String customerId, String operator, String correlation) {
+    return raw("account.open|" + customerId + "|DMND|BRL|500.00|" + operator + "|" + correlation + "|KOFV1")
+}
+record Staff(String name, String doc, String account, Long amount)
+
+main() {
+    var home = config.env("BANK_HOME")
+    if (home == "") {
+        println("payroll: BANK_HOME not set - refusing to run")
+        process.exit(2)
+    }
+
+    var h = contract()
+    if (valueOf(h, "contract") != "KBCLI-1") {
+        println("payroll: unsupported contract, aborting")
+        process.exit(3)
+    }
+    println("payroll: connected to " + valueOf(h, "core") + " " + valueOf(h, "contract"))
+
+    var seed = "" + time.now()
+    var batch = "PAY-" + seed.substring(seed.length() - 6, seed.length())
+    var payroll = listOf(
+        Staff("ANA", "51" + seed.substring(seed.length() - 6, seed.length()) + "01", "", 120000),
+        Staff("BRUNO", "52" + seed.substring(seed.length() - 6, seed.length()) + "02", "", 95000),
+        Staff("CINTIA", "53" + seed.substring(seed.length() - 6, seed.length()) + "03", "", 78000))
+
+    var ins = opsInspect()
+    if (outcome(ins) != "OK" || valueOf(ins, "class") != "CLEAN") {
+        println("payroll: bank not clean, aborting before any money moves: class=" + valueOf(ins, "class"))
+        process.exit(4)
+    }
+
+    var paid = 0
+    var failed = 0
+    var unresolved = 0
+    var firstAcct = ""
+    var firstReq = ""
+    var firstAmt = ""
+    var firstCorr = ""
+    var firstTxnId = ""
+
+    for (var s in payroll) {
+        var emp = batch + "-" + s.name
+        var cust = createCustomer("PAYROLL " + s.name, s.doc, "PAYBOT", emp)
+        var custId = valueOf(cust, "id")
+        var acct = openAccount(custId, "PAYBOT", emp + "-ACC")
+        var acctId = valueOf(acct, "id")
+
+        var amount = "" + s.amount
+        if (firstAcct == "") {
+            firstAcct = acctId
+            firstReq = emp + "-DEP"
+            firstAmt = amount
+            firstCorr = emp
+        }
+        var dep = deposit(acctId, amount, "MONTHLY SALARY", "PAYBOT", emp, emp + "-DEP")
+        if (firstTxnId == "" && dep.rc == "00") {
+            firstTxnId = dep.id
+        }
+        if (dep.rc == "26") {
+            unresolved = unresolved + 1
+            println("payroll: " + s.name + " request identity conflict, NOT retrying blindly")
+            continue
+        }
+        if (dep.rc != "00") {
+            failed = failed + 1
+            println("payroll: " + s.name + " rejected at submit rc=" + dep.rc + " msg=" + dep.msg)
+            continue
+        }
+
+        var ok = txnRequest("authorize", dep.id, "PAYBOT", emp, emp + "-AU").status == "AU"
+        ok = ok && txnRequest("post", dep.id, "PAYBOT", emp, emp + "-PO").status == "PO"
+        ok = ok && txnRequest("settle", dep.id, "PAYBOT", emp, emp + "-ST").status == "ST"
+        ok = ok && txnRequest("complete", dep.id, "PAYBOT", emp, emp + "-CP").status == "CP"
+
+        if (ok) {
+            var rec = txnGet(dep.id)
+            var co = correlate(dep.id)
+            var bal = balance(acctId)
+            if (rcOf(rec) == "00" && answered(co) && rcOf(bal) == "00") {
+                paid = paid + 1
+                println("payroll: " + s.name + " paid amount=" + valueOf(bal, "ledger") + " journal=" + valueOf(rec, "journal"))
+            } else {
+                unresolved = unresolved + 1
+                println("payroll: " + s.name + " lifecycle ok but verification incomplete; left for reconciliation")
+            }
+        } else {
+            failed = failed + 1
+            println("payroll: " + s.name + " lifecycle incomplete for txn=" + dep.id + " - must be inspected, not re-deposited")
+        }
+    }
+
+    var tr = trial()
+    var conserved = rcOf(tr) == "00" && valueOf(tr, "total-debit") == valueOf(tr, "total-credit")
+
+    var replayTest = deposit(firstAcct, firstAmt, "MONTHLY SALARY", "PAYBOT", firstCorr, firstReq)
+    println("payroll: duplicate submit of first salary rc=" + replayTest.rc + " same_txn=" + (replayTest.id == firstTxnId))
+
+    var inspect = opsInspect()
+    println("payroll: paid=" + paid + " failed=" + failed + " unresolved=" + unresolved)
+    println("payroll: ledger conserved=" + conserved)
+    println("payroll: post-batch class=" + valueOf(inspect, "class") + " rec-open=" + valueOf(inspect, "rec-open"))
+
+    if (unresolved > 0) {
+        println("payroll: UNRESOLVED OPERATIONS MUST BE RECONCILED (rc 4)")
+        process.exit(4)
+    }
+    if (failed > 0) {
+        println("payroll: completed with business rejections recorded")
+    }
+    if (conserved) {
+        println("payroll: OK")
+        process.exit(0)
+    }
+    println("payroll: conservation failure - refusing to signal success")
+    process.exit(5)
+}

@@ -74,4 +74,7 @@ SHOW-ONE.
         " status=" TXN-STATUS OF TXN-REC
         " type=" FUNCTION TRIM(TXN-TYPE OF TXN-REC)
         " amount=" WS-AMT-ED
-        " currency=" FUNCTION TRIM(TXN-CURRENCY OF TXN-REC).
+        " currency=" FUNCTION TRIM(TXN-CURRENCY OF TXN-REC)
+        " src=" FUNCTION TRIM(TXN-SRC OF TXN-REC)
+        " dst=" FUNCTION TRIM(TXN-DST OF TXN-REC)
+        " created=" TXN-CREATED OF TXN-REC.
