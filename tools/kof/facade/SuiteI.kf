@@ -1,0 +1,106 @@
+Int countWhereI(String hay, String needle) {
+    var n = 0
+    var i = 0
+    var step = needle.length()
+    if (step == 0) {
+        return 0
+    }
+    while (i + step <= hay.length()) {
+        if (hay.substring(i, i + step) == needle) {
+            n = n + 1
+            i = i + step
+        } else {
+            i = i + 1
+        }
+    }
+    return n
+}
+
+Int txnCount(String cust) {
+    return countWhereI(txnList(cust).text, "id=")
+}
+
+main() {
+    var f = 0
+    var base = "http://127.0.0.1:8987"
+    seedFacade()
+    spawn serveOn(8987)
+    time.sleep(1500)
+    var ana = "SES.ana.C00000000001"
+
+    var baseCount = txnCount("C00000000001")
+    var allPosted = true
+    var i = 1
+    while (i <= 10) {
+        var rid = "LOAD-" + i
+        var resp = p(base, "/api/accounts/A00000000001/transfers", ana, "{\"amount\":\"1000\",\"to\":\"A00000000003\",\"description\":\"L" + i + "\",\"requestId\":\"" + rid + "\",\"correlationId\":\"" + rid + "\"}")
+        if (!resp.contains("COMPLETED") && !resp.contains("txnId")) {
+            allPosted = false
+        }
+        i = i + 1
+    }
+    f = f + tcheck("I.load.allCompleted", allPosted)
+    var midCount = txnCount("C00000000001")
+    f = f + tcheck("I.load.countTen", midCount - baseCount == 10)
+
+    i = 1
+    while (i <= 10) {
+        var rid2 = "LOAD-" + i
+        p(base, "/api/accounts/A00000000001/transfers", ana, "{\"amount\":\"1000\",\"to\":\"A00000000003\",\"description\":\"L" + i + "\",\"requestId\":\"" + rid2 + "\",\"correlationId\":\"" + rid2 + "\"}")
+        i = i + 1
+    }
+    var replayCount = txnCount("C00000000001")
+    f = f + tcheck("I.load.idempotentReplay", replayCount == midCount)
+
+    var allCommitted = true
+    i = 1
+    while (i <= 10) {
+        var op = g(base, "/api/operations/LOAD-" + i, ana)
+        if (!op.contains("\"verdict\":\"COMMITTED\"") && !op.contains("\"verdict\":\"VISIBLE\"")) {
+            allCommitted = false
+        }
+        i = i + 1
+    }
+    f = f + tcheck("I.load.allResolvable", allCommitted)
+
+    var tr1 = trialBalance()
+    f = f + tcheck("I.load.trialBalanced", rcOf(tr1) == "00" && valueOf(tr1, "total-debit") == valueOf(tr1, "total-credit"))
+    var ins1 = opsInspect()
+    f = f + tcheck("I.load.storeClean", valueOf(ins1, "class") == "CLEAN" && valueOf(ins1, "txn-pend") == "00000")
+
+    var tc = transfer("A00000000001", "A00000000003", "5555", "BRL", "TRACE", "x0", "CORR-TRACE", "TRACE-REQ")
+    var tx = tc.id
+    txnRequest("authorize", tx, "x0", "CORR-TRACE", "TRACE-AU")
+    txnRequest("post", tx, "x0", "CORR-TRACE", "TRACE-PO")
+    txnRequest("settle", tx, "x0", "CORR-TRACE", "TRACE-ST")
+    txnRequest("complete", tx, "x0", "CORR-TRACE", "TRACE-CP")
+    var jref = "TXN" + tx + "-P"
+
+    var detail = g(base, "/api/transactions/" + tx, ana)
+    f = f + tcheck("I.corr.detailCarriesJournal", detail.contains(jref) && detail.contains("\"status\":\"CP\""))
+    var cTx = correlate(tx)
+    f = f + tcheck("I.corr.byTxnFound", rcOf(cTx) == "00" && valueOf(cTx, "hits") != "00000")
+    var cJrn = correlate(jref)
+    f = f + tcheck("I.corr.byJournalMultiStore", rcOf(cJrn) == "00" && valueOf(cJrn, "hits") != "00000" && valueOf(cJrn, "hits") != "00001")
+    var opTrace = g(base, "/api/operations/TRACE-REQ", ana)
+    f = f + tcheck("I.corr.opCommitted", opTrace.contains("\"verdict\":\"COMMITTED\"") && opTrace.contains(tx))
+
+    var rej = p(base, "/api/accounts/A00000000001/transfers", ana, "{\"amount\":\"9000000000000\",\"to\":\"A00000000003\",\"description\":\"GHOSTFAIL\",\"requestId\":\"FAIL-REQ\",\"correlationId\":\"FAIL-REQ\"}")
+    f = f + tcheck("I.fail.rejected", rej.contains("BUSINESS_REJECTION") || rej.contains("INSUFFICIENT") || rej.contains("REJECTED"))
+    var opFail = g(base, "/api/operations/FAIL-REQ", ana)
+    f = f + tcheck("I.fail.safeVerdict", opFail.contains("NON_COMMITTED_SAFE") || opFail.contains("NOT_FOUND") || opFail.contains("CONFIRMED_NOT_EFFECTIVE"))
+    f = f + tcheck("I.fail.notCommitted", !opFail.contains("\"verdict\":\"COMMITTED\""))
+    f = f + tcheck("I.fail.retryable", opFail.contains("\"retryable\":true"))
+
+    var insEnd = opsInspect()
+    f = f + tcheck("I.final.storeClean", valueOf(insEnd, "class") == "CLEAN")
+    var trEnd = trialBalance()
+    f = f + tcheck("I.final.trial", rcOf(trEnd) == "00" && valueOf(trEnd, "total-debit") == valueOf(trEnd, "total-credit"))
+
+    if (f > 0) {
+        println("suiteI: " + f + " failed")
+        process.exit(1)
+    }
+    println("suiteI: passed")
+    process.exit(0)
+}

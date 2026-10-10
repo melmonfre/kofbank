@@ -1,0 +1,77 @@
+main() {
+    var f = 0
+    var base = "http://127.0.0.1:8985"
+    seedFacade()
+    spawn serveOn(8985)
+    time.sleep(1200)
+    var ana = "SES.ana.C00000000001"
+
+    var forged = g(base, "/api/accounts", "SES.ana.C00000000001.evil")
+    f = f + tcheck("sec.forged.suffix", forged.contains("UNAUTHENTICATED"))
+    var swapped = g(base, "/api/balance", "SES.bob.C00000000001")
+    f = f + tcheck("sec.swapped.identity", swapped.contains("UNAUTHENTICATED") || swapped.contains("error"))
+    var ghostUser = g(base, "/api/accounts", "SESmall.eve.C00000000003")
+    f = f + tcheck("sec.malformed.token", ghostUser.contains("UNAUTHENTICATED"))
+    var eve = g(base, "/api/accounts", "SES.eve.C00000000003")
+    f = f + tcheck("sec.unknown.user", eve.contains("UNAUTHENTICATED"))
+    var missingCust = g(base, "/api/accounts", "SES.ana.C00000000099")
+    f = f + tcheck("sec.customer.absent", missingCust.contains("UNAUTHENTICATED"))
+
+    var leak = g(base, "/api/accounts", "not-a-token")
+    f = f + tcheck("sec.no.storage.leak", !leak.contains("var/data") && !leak.contains(".idx") && !leak.contains("BANK_HOME") && !leak.contains("cobol"))
+    var errBody = g(base, "/api/transactions/XXXXXXXXXXXXX", ana)
+    f = f + tcheck("sec.id.shape.enforced", errBody.contains("INVALID_TXN_ID") || errBody.contains("NOT_FOUND"))
+    f = f + tcheck("sec.err.no.paths", !errBody.contains("/") && !errBody.contains("libcob"))
+
+    var loginBody = p(base, "/api/auth/login", "NOAUTH", "{\"username\":\"ana\",\"secret\":\"nope\"}")
+    f = f + tcheck("sec.secret.not.leaked", !loginBody.contains("nope") && !loginBody.contains("kof-demo"))
+
+    var pipeDesc = p(base, "/api/accounts/A00000000001/deposits", ana, "{\"amount\":\"100\",\"description\":\"x|txn.reverse|T00000000001\",\"requestId\":\"QE1\",\"correlationId\":\"QE1\"}")
+    f = f + tcheck("sec.pipe.injection", pipeDesc.contains("INVALID_DEPOSIT_BODY") && pipeDesc.contains("safe"))
+    var nlReq = p(base, "/api/accounts/A00000000001/deposits", ana, "{\"amount\":\"100\",\"description\":\"ok\",\"requestId\":\"QE2\nsystem.contract\",\"correlationId\":\"QE1\"}")
+    f = f + tcheck("sec.newline.injection", nlReq.contains("INVALID") || nlReq.contains("malformed"))
+    var longReq = p(base, "/api/accounts/A00000000001/deposits", ana, "{\"amount\":\"100\",\"description\":\"ok\",\"requestId\":\"ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890\",\"correlationId\":\"QE1\"}")
+    f = f + tcheck("sec.width.guard", longReq.contains("24 chars") || longReq.contains("requestId"))
+
+    var trailAcct = g(base, "/api/accounts/A00000000001X/balance", ana)
+    f = f + tcheck("sec.acct.shape.balance", trailAcct.contains("INVALID_ACCOUNT_ID"))
+    var xferPath = p(base, "/api/accounts/A00000000001/transfers", ana, "{\"amount\":\"100\",\"to\":\"A00000000002X\",\"description\":\"X\",\"requestId\":\"QE3\",\"correlationId\":\"QE3\"}")
+    f = f + tcheck("sec.xfer.dst.shape", xferPath.contains("shape"))
+
+    for (var path in listOf("/api/accounts", "/api/accounts/A00000000001", "/api/accounts/A00000000001/balance", "/api/accounts/A00000000001/transactions", "/api/transactions/T00000000001", "/api/operations/QE1")) {
+        var resp = g(base, path, "NOAUTH")
+        f = f + tcheck("sec.401." + path.replace("/api/", ""), resp.contains("UNAUTHENTICATED"))
+    }
+    var postNoAuth = p(base, "/api/accounts/A00000000001/transfers", "NOAUTH", "{\"amount\":\"100\",\"to\":\"A00000000002\",\"requestId\":\"QE4\",\"correlationId\":\"QE4\"}")
+    f = f + tcheck("sec.post.401", postNoAuth.contains("UNAUTHENTICATED"))
+
+    var foreignXfer = p(base, "/api/accounts/A00000000001/transfers", "SES.bob.C00000000002", "{\"amount\":\"100\",\"to\":\"A00000000003\",\"requestId\":\"QE5\",\"correlationId\":\"QE5\"}")
+    f = f + tcheck("sec.xfer.ownership", foreignXfer.contains("FORBIDDEN"))
+    var spyDetail = g(base, "/api/transactions/T00000000001", "SES.bob.C00000000002")
+    var aliasX = g(base, "/api/accounts/A00000000001./balance", ana)
+    f = f + tcheck("sec.alias.dot.suffix", aliasX.contains("INVALID_ACCOUNT_ID"))
+    var aliasHist = g(base, "/api/accounts/A000000000001/transactions", ana)
+    f = f + tcheck("sec.alias.wrong.width", aliasHist.contains("INVALID_ACCOUNT_ID"))
+    f = f + tcheck("sec.detail.isolation", spyDetail.contains("FORBIDDEN") || spyDetail.contains("NOT_FOUND"))
+
+    var opXfer = p(base, "/api/accounts/A00000000001/transfers", ana, "{\"amount\":\"10000\",\"to\":\"A00000000003\",\"description\":\"OPX\",\"requestId\":\"QE-OPX\",\"correlationId\":\"QE-OPX\"}")
+    f = f + tcheck("sec.opxfer.created", opXfer.contains("COMPLETED") || opXfer.contains("txnId"))
+    var opBob = g(base, "/api/operations/QE-OPX", "SES.bob.C00000000002")
+    f = f + tcheck("sec.operations.forbidden", opBob.contains("FORBIDDEN"))
+    f = f + tcheck("sec.operations.no.txnleak", !opBob.contains("T00000"))
+    var opOwner = g(base, "/api/operations/QE-OPX", ana)
+    f = f + tcheck("sec.operations.ownerVisible", !opOwner.contains("FORBIDDEN") && opOwner.contains("\"verdict\""))
+
+    var health = g(base, "/api/health", "NOAUTH")
+    f = f + tcheck("sec.health.public", health.contains("\"UP\"") && !health.contains("idx"))
+
+    var ins = opsInspect()
+    f = f + tcheck("sec.store.clean", valueOf(ins, "class") == "CLEAN")
+
+    if (f > 0) {
+        println("suiteE: " + f + " failed")
+        process.exit(1)
+    }
+    println("suiteE: passed")
+    process.exit(0)
+}

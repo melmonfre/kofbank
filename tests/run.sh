@@ -4045,6 +4045,11 @@ check "txn.xfer.self.reject" "20" "$(value "$out" rc=)"
 check "txn.xfer.self.msg" "SOURCE AND DESTINATION MUST DIFFER" "$(sed -n "s/^msg=//p" <<<"$out" | head -1 | sed "s/ *$//")"
 out=$(bank "txn.create|TRANSFER|A00000000001|A00000000099|10|BRL|TDBD|OP01|TD9|TDQ5")
 check "txn.xfer.baddst.reject" "20" "$(value "$out" rc=)"
+out=$(bank "txn.lookup|TDQ1")
+check "txn.lookup.done.rc" "C" "$(value "$out" rc=)"
+check "txn.lookup.done.id" "$tid" "$(sed -n 's/^result=//p' <<<"$out" | head -1 | cut -c1-12 | tr -d ' ')"
+check "txn.lookup.fail.rc" "F" "$(value "$(bank "txn.lookup|TDQ3")" rc=)"
+check "txn.lookup.missing.rc" "23" "$(value "$(bank "txn.lookup|TDQ99")" rc=)"
 
 echo "tests: $((PASS + FAIL)) passed: $PASS failed: $FAIL"
 [ "$FAIL" -eq 0 ]

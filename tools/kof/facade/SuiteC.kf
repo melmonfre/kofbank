@@ -1,7 +1,8 @@
 main() {
     var f = 0
+    seedFacade()
     spawn serveOn(8983)
-    time.sleep(400)
+    time.sleep(1200)
     var boundaryFail = rawAt("/nonexistent-path", "system.contract")
         f = f + tcheck("boundary.infra.classified", outcome(boundaryFail) == "INFRA_FAIL" && operationalFailure(boundaryFail))
     var viewUnknown = viewFrom("{\"error\":\"UNKNOWN_OUTCOME\",\"category\":\"UNKNOWN\"}")

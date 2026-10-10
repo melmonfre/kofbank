@@ -1,0 +1,167 @@
+main() {
+    var f = 0
+    var base = "http://127.0.0.1:8984"
+    seedFacade()
+    spawn serveOn(8984)
+    time.sleep(1200)
+    var ana = "SES.ana.C00000000001"
+    var bob = "SES.bob.C00000000002"
+
+    var balA0 = g(base, "/api/accounts/A00000000001/balance", ana)
+    var balB0 = g(base, "/api/accounts/A00000000002/balance", bob)
+
+    var tx = "{\"amount\":\"10000\",\"to\":\"A00000000002\",\"description\":\"XFER OK\",\"requestId\":\"XD-TX1\",\"correlationId\":\"XD-C1\"}"
+    var t1 = p(base, "/api/accounts/A00000000001/transfers", ana, tx)
+    f = f + tcheck("xfer.completed", t1.contains("\"status\":\"COMPLETED\"") && t1.contains("\"txnId\":\"T"))
+    var txn1 = idOnly(between(t1, "\"txnId\":\"", ","))
+    f = f + tcheck("xfer.durable.ref", txn1.startsWith("T") && txn1.length() == 12)
+
+    var balA1 = g(base, "/api/accounts/A00000000001/balance", ana)
+    var balB1 = g(base, "/api/accounts/A00000000002/balance", bob)
+    f = f + tcheck("xfer.bal.move", balA1 != balA0 && balB1 != balB0 && !balA1.contains("error") && !balB1.contains("error"))
+    var coreA = balance("A00000000001")
+    f = f + tcheck("xfer.bal.authority", balA1.contains("\"ledger\":\"" + valueOf(coreA, "ledger") + "\""))
+
+    var h1 = g(base, "/api/accounts/A00000000001/transactions", ana)
+    f = f + tcheck("xfer.history.src", h1.contains(txn1))
+    var h2 = g(base, "/api/accounts/A00000000002/transactions", bob)
+    f = f + tcheck("xfer.history.dst", h2.contains(txn1))
+    var d1 = g(base, "/api/transactions/" + txn1, ana)
+    f = f + tcheck("xfer.detail", d1.contains("\"type\":\"TRANSFER\"") && d1.contains("\"status\":\"CP\"") && d1.contains("\"journalRef\":\"TXN"))
+    var d1b = g(base, "/api/transactions/" + txn1, bob)
+    f = f + tcheck("xfer.detail.dst.side", d1b.contains(txn1))
+
+    var lk = g(base, "/api/operations/XD-TX1", ana)
+    f = f + tcheck("xfer.lookup.committed", lk.contains("\"verdict\":\"COMMITTED\"") && lk.contains("\"effectApplied\":\"yes\"") && lk.contains(txn1))
+
+    var tReplay = p(base, "/api/accounts/A00000000001/transfers", ana, tx)
+    f = f + tcheck("xfer.replay.same.txn", tReplay.contains(txn1))
+    var balA2 = g(base, "/api/accounts/A00000000001/balance", ana)
+    f = f + tcheck("xfer.replay.no.double", balA2 == balA1)
+
+    var tamper = "{\"amount\":\"99999\",\"to\":\"A00000000002\",\"description\":\"XFER OK\",\"requestId\":\"XD-TX1\",\"correlationId\":\"XD-C1\"}"
+    var tTamper = p(base, "/api/accounts/A00000000001/transfers", ana, tamper)
+    f = f + tcheck("xfer.tamper.conflict", tTamper.contains("IDEMPOTENCY_CONFLICT") && tTamper.contains("\"coreRc\":\"26\"") && tTamper.contains("\"retryable\":false"))
+
+    var poor = "{\"amount\":\"9000000\",\"to\":\"A00000000002\",\"description\":\"TOO BIG\",\"requestId\":\"XD-TX2\",\"correlationId\":\"XD-C2\"}"
+    var tPoor = p(base, "/api/accounts/A00000000001/transfers", ana, poor)
+    f = f + tcheck("xfer.insufficient", tPoor.contains("INSUFFICIENT") || tPoor.contains("BUSINESS_REJECTION"))
+    var balA3 = g(base, "/api/accounts/A00000000001/balance", ana)
+    f = f + tcheck("xfer.insufficient.noeffect", balA3 == balA1)
+    var lkF = g(base, "/api/operations/XD-TX2", ana)
+    f = f + tcheck("xfer.rejected.lookup.fail", lkF.contains("\"verdict\":\"NON_COMMITTED_SAFE\"") && lkF.contains("\"retryable\":true"))
+
+    var ghost = "{\"amount\":\"100\",\"to\":\"A00000000099\",\"description\":\"GHOST\",\"requestId\":\"XD-TX3\",\"correlationId\":\"XD-C3\"}"
+    var tGhost = p(base, "/api/accounts/A00000000001/transfers", ana, ghost)
+    f = f + tcheck("xfer.ghost.dst", tGhost.contains("BUSINESS_REJECTION") && tGhost.contains("ACCOUNT NOT FOUND"))
+
+    var selfy = "{\"amount\":\"100\",\"to\":\"A00000000001\",\"description\":\"SELF\",\"requestId\":\"XD-TX4\",\"correlationId\":\"XD-C4\"}"
+    var tSelf = p(base, "/api/accounts/A00000000001/transfers", ana, selfy)
+    f = f + tcheck("xfer.self.reject", tSelf.contains("MUST DIFFER") || tSelf.contains("BUSINESS_REJECTION"))
+
+    var stolen = "{\"amount\":\"100\",\"to\":\"A00000000001\",\"description\":\"STOLEN\",\"requestId\":\"XD-TX5\",\"correlationId\":\"XD-C5\"}"
+    var tStolen = p(base, "/api/accounts/A00000000002/transfers", ana, stolen)
+    f = f + tcheck("xfer.foreign.src", tStolen.contains("FORBIDDEN"))
+
+    var badAmt = "{\"amount\":\"12.5\",\"to\":\"A00000000002\",\"description\":\"X\",\"requestId\":\"XD-TX6\",\"correlationId\":\"XD-C6\"}"
+    f = f + tcheck("xfer.bad.amount", p(base, "/api/accounts/A00000000001/transfers", ana, badAmt).contains("integer cents"))
+    var badCur = "{\"amount\":\"100\",\"to\":\"A00000000002\",\"currency\":\"USD\",\"description\":\"X\",\"requestId\":\"XD-TX7\",\"correlationId\":\"XD-C7\"}"
+    f = f + tcheck("xfer.bad.currency", p(base, "/api/accounts/A00000000001/transfers", ana, badCur).contains("MISMATCH"))
+    var badShape = "{\"amount\":\"100\",\"to\":\"A12\",\"description\":\"X\",\"requestId\":\"XD-TX8\",\"correlationId\":\"XD-C8\"}"
+    f = f + tcheck("xfer.bad.dst.shape", p(base, "/api/accounts/A00000000001/transfers", ana, badShape).contains("shape"))
+
+    var preSeam = transfer("A00000000001", "A00000000002", "5000", "BRL", "SEAM", "SEED", "XD-SC", "XD-SEAM-C")
+    var rid = preSeam.id
+    txnRequest("authorize", rid, "SEED", "XD-SC", "XD-SEAM-AU")
+    var seam = rawCrashed(rid)
+    f = f + tcheck("seam.rc.90", valueOf(seam, "rc") == "90")
+    var lkCrash = g(base, "/api/operations/XD-SEAM1-PO", ana)
+    f = f + tcheck("lookup.crash.unestablishable", lkCrash.contains("\"verdict\":\"RECONCILIATION_REQUIRED\"") && lkCrash.contains("\"effectApplied\":\"no\"") && !lkCrash.contains("NON_COMMITTED_SAFE") && !lkCrash.contains("SIMULATED"))
+    var rcv = recover(rid)
+    f = f + tcheck("seam.recover.finishes", rcOf(rcv) == "00")
+    var d2 = g(base, "/api/transactions/" + rid, ana)
+    f = f + tcheck("seam.recovered.visible", d2.contains("\"status\":\"PO\"") || d2.contains("\"status\":\"AU\""))
+    var jrn = journal("TXN" + rid + "-P")
+    f = f + tcheck("seam.journal.once", valueOf(jrn, "found") == "0001" && valueOf(jrn, "lines") == "0002")
+    txnRequest("settle", rid, "SEED", "XD-SC", "XD-SEAM-ST")
+    txnRequest("complete", rid, "SEED", "XD-SC", "XD-SEAM-CP")
+    var d2b = g(base, "/api/transactions/" + rid, ana)
+    f = f + tcheck("seam.reached.cp", d2b.contains("\"status\":\"CP\""))
+
+    var twin = "{\"amount\":\"7000\",\"to\":\"A00000000002\",\"description\":\"TWIN\",\"requestId\":\"XD-TWIN\",\"correlationId\":\"XD-TWINC\"}"
+    var balBefore = balance("A00000000001")
+    spawn twinRacer(twin)
+    time.sleep(150)
+    var lkTwin = g(base, "/api/operations/XD-TWIN", ana)
+    f = f + tcheck("twin.lookup.single", lkTwin.contains("\"verdict\":\"COMMITTED\"") || lkTwin.contains("UNKNOWN_OUTCOME") || lkTwin.contains("RECONCILIATION_REQUIRED"))
+    var tReplay3 = p(base, "/api/accounts/A00000000001/transfers", ana, twin)
+    f = f + tcheck("twin.replay.safe", tReplay3.contains("\"status\":\"COMPLETED\"") || tReplay3.contains("UNKNOWN_OUTCOME") || tReplay3.contains("RECONCILIATION"))
+    var balAfter = balance("A00000000001")
+    f = f + tcheck("twin.effect.once", valueOf(balAfter, "ledger") != valueOf(balBefore, "ledger") && balAfter.text == balance("A00000000001").text)
+
+    var t4 = p(base, "/api/accounts/A00000000002/transfers", bob, "{\"amount\":\"30000\",\"to\":\"A00000000003\",\"description\":\"XFER BOB\",\"requestId\":\"XD-TX9\",\"correlationId\":\"XD-C9\"}")
+    f = f + tcheck("xfer.bob.committed", t4.contains("\"status\":\"COMPLETED\""))
+
+    var trial = trialBalance()
+    f = f + tcheck("xfer.trial", rcOf(trial) == "00" && valueOf(trial, "total-debit") == valueOf(trial, "total-credit"))
+    var ins = opsInspect()
+    f = f + tcheck("xfer.store.clean", valueOf(ins, "class") == "CLEAN" && valueOf(ins, "txn-pend") == "00000")
+
+    if (f > 0) {
+        println("suiteD: " + f + " failed")
+        process.exit(1)
+    }
+    println("suiteD: passed")
+    process.exit(0)
+}
+
+Void twinRacer(String twin) {
+    var b = "http://127.0.0.1:8984"
+    var tok = "SES.ana.C00000000001"
+    var r1 = http.post(b + "/api/accounts/A00000000001/transfers", twin, "Content-Type: application/json", "X-Session-Token: " + tok)
+    var r2 = http.post(b + "/api/accounts/A00000000001/transfers", twin, "Content-Type: application/json", "X-Session-Token: " + tok)
+    if (r1.contains("\"status\":\"COMPLETED\"") || r1.contains("UNKNOWN_OUTCOME") || r1.contains("IDEMPOTENCY_CONFLICT")) {
+        println("ok   twin.resp1.safe")
+    } else {
+        println("FAIL twin.resp1.safe [" + r1 + "]")
+    }
+    if (r2.contains("\"status\":\"COMPLETED\"") || r2.contains("UNKNOWN_OUTCOME") || r2.contains("IDEMPOTENCY_CONFLICT")) {
+        println("ok   twin.resp2.safe")
+    } else {
+        println("FAIL twin.resp2.safe [" + r2 + "]")
+    }
+    if (r1.contains("\"txnId\":\"T") && r2.contains("\"txnId\":\"T")) {
+        println("ok   twin.same.ref")
+    }
+}
+
+String idOnly(String v) {
+    var out = ""
+    var n = v.length()
+    for (var i = 0; i < n; i++) {
+        var c = v.substring(i, i + 1)
+        if (strings.isNumeric(c) || "ABCDEFGHIJKLMNOPQRSTUVWXYZ".contains(c)) {
+            out = out + c
+        }
+    }
+    return out
+}
+
+String between(String hay, String left, String right) {
+    if (!hay.contains(left)) {
+        return ""
+    }
+    var rest = hay.substring(hay.indexOf(left) + left.length(), hay.length())
+    if (!rest.contains(right)) {
+        return ""
+    }
+    return rest.substring(0, rest.indexOf(right))
+}
+
+BankReply rawCrashed(String txnId) {
+    var home = config.env("BANK_HOME")
+    var res = shell.pipeline(listOf(
+        listOf("printf", "txn.post|" + txnId + "|SEED|XD-SC|XD-SEAM1-PO\n"),
+        listOf("env", "KOF_CRASH=AFTER-POST", home + "/build/bank")))
+    return BankReply(res.exitCode, res.stdout, res.stderr)
+}

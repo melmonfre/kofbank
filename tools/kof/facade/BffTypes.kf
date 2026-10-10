@@ -241,12 +241,12 @@ Rec parseDepositBody(String? body) {
         return Rec(false, "", "", "", correlationId, "amount must be integer cents")
     }
     if (!requestIdOk(requestId)) {
-        return Rec(false, "", "", "", correlationId, "requestId must be safe printable text up to 40 chars")
+        return Rec(false, "", "", "", correlationId, "requestId must be safe printable text up to 24 chars")
     }
     if (correlationId != "" && !requestIdOk(correlationId)) {
-        return Rec(false, "", "", "", correlationId, "correlationId must be safe printable text up to 40 chars")
+        return Rec(false, "", "", "", correlationId, "correlationId must be safe printable text up to 24 chars")
     }
-    if (!safeText(description, 30)) {
+    if (!safeText(description, 40)) {
         return Rec(false, "", "", "", correlationId, "description must be safe text up to 30 chars")
     }
     return Rec(true, amount, description, requestId, correlationId, "")
@@ -351,7 +351,7 @@ Bool accountIdOk(String v) {
 }
 
 Bool txnIdOk(String v) {
-    return shapeOk(v, "T", 13)
+    return shapeOk(v, "T", 12)
 }
 
 Bool safeText(String v, Int maxLen) {
@@ -374,5 +374,91 @@ Bool requestIdOk(String v) {
     if (v == "") {
         return false
     }
-    return safeText(v, 40)
+    return safeText(v, 24)
+}
+
+record OpVerdict(String verdict, Bool effectApplied, Bool retryable, String action, Bool discloseTxn)
+
+record OperationDto(String verdict, String txnId, String txnStatus, String effectApplied, String action, Bool retryable, String message, String correlationId)
+
+Bool committedTxn(String st) {
+    return st == "PO" || st == "ST" || st == "CP"
+}
+
+Bool pendingTxn(String st) {
+    return st == "VA" || st == "AU"
+}
+
+Bool terminalIneffective(String st) {
+    return st == "CN" || st == "RJ" || st == "CR"
+}
+
+String actionForVerdict(String v) {
+    if (v == "COMMITTED") {
+        return "none"
+    }
+    if (v == "NON_COMMITTED_SAFE") {
+        return "you may safely submit this operation again"
+    }
+    if (v == "VISIBLE") {
+        return "transaction exists but is not posted; inspect the transaction, do not repost"
+    }
+    if (v == "CONFIRMED_NOT_EFFECTIVE") {
+        return "operation reached a non-effective terminal state; inspect the transaction"
+    }
+    if (v == "NOT_FOUND") {
+        return "no durable operation for this identity"
+    }
+    return "outcome undetermined; reconcile via recover/inspect, never auto-repost"
+}
+
+Bool retryableVerdict(String v) {
+    return v == "NON_COMMITTED_SAFE"
+}
+
+String yesNo(Bool b) {
+    if (b) {
+        return "yes"
+    }
+    return "no"
+}
+
+OpVerdict reconcileOperation(String idmState, String operation, Bool txnExists, String txnStatus, Bool journalEvidence) {
+    if (idmState == "23") {
+        return OpVerdict("NOT_FOUND", false, false, "no durable operation for this identity", false)
+    }
+    if (idmState == "R") {
+        return OpVerdict("RECONCILIATION_REQUIRED", false, false, "operation still in progress", false)
+    }
+    if (idmState == "C" && operation == "TXN.CREATE") {
+        if (committedTxn(txnStatus)) {
+            return OpVerdict("COMMITTED", true, false, "durable effect committed by core", true)
+        }
+        if (pendingTxn(txnStatus)) {
+            return OpVerdict("VISIBLE", false, false, "created and visible, not posted", true)
+        }
+        if (txnStatus == "RV") {
+            return OpVerdict("RECONCILIATION_REQUIRED", false, false, "reversed after commit", true)
+        }
+        return OpVerdict("CONFIRMED_NOT_EFFECTIVE", false, false, "reached non-effective terminal state", true)
+    }
+    if (idmState == "F" && !txnExists) {
+        if (operation == "TXN.CREATE") {
+            return OpVerdict("NON_COMMITTED_SAFE", false, true, "creation failed before any transaction existed", false)
+        }
+        return OpVerdict("RECONCILIATION_REQUIRED", false, false, "lifecycle attempt without resolvable transaction; effect cannot be established by request identity", false)
+    }
+    if (!txnExists) {
+        return OpVerdict("NON_COMMITTED_SAFE", false, true, "attempt failed, no durable effect", false)
+    }
+    if (committedTxn(txnStatus)) {
+        return OpVerdict("COMMITTED", true, false, "durable effect committed by core", true)
+    }
+    if (journalEvidence) {
+        return OpVerdict("RECONCILIATION_REQUIRED", false, false, "durable evidence present but attempt not confirmed", true)
+    }
+    if (pendingTxn(txnStatus)) {
+        return OpVerdict("NON_COMMITTED_SAFE", false, true, "attempt failed before posting", false)
+    }
+    return OpVerdict("RECONCILIATION_REQUIRED", false, false, "ambiguous terminal state", true)
 }

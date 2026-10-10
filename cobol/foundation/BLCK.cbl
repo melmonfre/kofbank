@@ -1,6 +1,25 @@
 IDENTIFICATION DIVISION.
 PROGRAM-ID. BLCK.
 
+*> Advisory cross-process lock.  The lock itself is a persistent claim record in
+*> lock.idx (owner + TTL), so a hold taken in one CLI process is still visible
+*> to a later, different process until it is released or expires - this is what
+*> PIX mediation holds, card holds and the transaction/post locks rely on.
+*>
+*> The historical defect was purely atomicity: the check-and-set
+*> (WRITE, INVALID KEY, READ, REWRITE) had no OS-level guard, so two processes
+*> could both observe the key absent and both claim it (observed as a
+*> same-requestId double create).  The fix is a real cross-process mutex around
+*> that check-and-set: the KFLOCK helper (flock(2)) is held ONLY for the
+*> microseconds of the claim/release on lock.idx and released before returning,
+*> so it never becomes the long-lived hold itself and cannot strand on process
+*> death.  Because every lock.idx mutation is now serialised, the GnuCOBOL ISAM
+*> lost-update/corruption on concurrent writes is also eliminated for this file.
+*>
+*> Contract preserved for callers: "00" = acquired, non-"00" = busy or infra
+*> error (mapped by callers to a safe refusal such as rc 24). 'A' = try-acquire,
+*> 'R' = release. See ADR 0022 for ordering and crash semantics.
+
 ENVIRONMENT DIVISION.
 INPUT-OUTPUT SECTION.
 FILE-CONTROL.
@@ -28,6 +47,10 @@ WORKING-STORAGE SECTION.
 01 WS-NOWSEC PIC 9(05).
 01 WS-TTL PIC 9(05) VALUE 300.
 01 WS-EXPIRE PIC 9(05).
+01 WS-DATA-DIR PIC X(80).
+01 WS-REG-NAME PIC X(64) VALUE "REGISTRY-LOCKIDX".
+01 WS-KF-MODE PIC X(01).
+01 WS-KF-STATUS PIC X(02).
 
 LINKAGE SECTION.
 01 LS-NAME PIC X(24).
@@ -38,9 +61,28 @@ LINKAGE SECTION.
 PROCEDURE DIVISION USING LS-NAME LS-OWNER LS-MODE LS-STATUS.
     MOVE "00" TO LS-STATUS
     ACCEPT WS-HOME FROM ENVIRONMENT "BANK_HOME"
+    MOVE SPACES TO WS-DATA-DIR
+    STRING FUNCTION TRIM(WS-HOME) "/var/data"
+        DELIMITED SIZE INTO WS-DATA-DIR
+    END-STRING
     MOVE SPACES TO WS-LOCK-PATH
     STRING FUNCTION TRIM(WS-HOME) "/var/data/lock.idx"
         DELIMITED SIZE INTO WS-LOCK-PATH
+    END-STRING
+    PERFORM REG-ACQUIRE
+    IF WS-KF-STATUS NOT = "00"
+        MOVE WS-KF-STATUS TO LS-STATUS
+        GOBACK
+    END-IF
+    EVALUATE LS-MODE
+        WHEN "A" PERFORM ACQUIRE-LOCK
+        WHEN "R" PERFORM RELEASE-LOCK
+        WHEN OTHER MOVE "99" TO LS-STATUS
+    END-EVALUATE
+    PERFORM REG-RELEASE
+    GOBACK.
+
+ACQUIRE-LOCK.
     OPEN I-O LOCK-FILE
     IF WS-LK-ST = "35"
         OPEN OUTPUT LOCK-FILE
@@ -51,15 +93,6 @@ PROCEDURE DIVISION USING LS-NAME LS-OWNER LS-MODE LS-STATUS.
         MOVE WS-LK-ST TO LS-STATUS
         GOBACK
     END-IF
-    EVALUATE LS-MODE
-        WHEN "A" PERFORM ACQUIRE-LOCK
-        WHEN "R" PERFORM RELEASE-LOCK
-        WHEN OTHER MOVE "99" TO LS-STATUS
-    END-EVALUATE
-    CLOSE LOCK-FILE
-    GOBACK.
-
-ACQUIRE-LOCK.
     MOVE FUNCTION CURRENT-DATE TO WS-NOW
     MOVE WS-NOW(1:8) TO WS-TODAY
     COMPUTE WS-NOWSEC = FUNCTION NUMVAL(WS-NOW(9:2)) * 3600
@@ -75,7 +108,8 @@ ACQUIRE-LOCK.
     MOVE WS-EXPIRE TO LK-SECS
     WRITE LOCK-REC
         INVALID KEY PERFORM RECLAIM-OR-FAIL
-    END-WRITE.
+    END-WRITE
+    CLOSE LOCK-FILE.
 
 RECLAIM-OR-FAIL.
     READ LOCK-FILE
@@ -102,9 +136,24 @@ RECLAIM-OR-FAIL.
 
 RELEASE-LOCK.
     MOVE LS-NAME TO LK-NAME
-    READ LOCK-FILE
-        INVALID KEY CONTINUE
-    END-READ
-    IF WS-LK-ST = "00" AND LK-OWNER = LS-OWNER
-        DELETE LOCK-FILE
-    END-IF.
+    OPEN I-O LOCK-FILE
+    IF WS-LK-ST = "00"
+        READ LOCK-FILE
+            INVALID KEY CONTINUE
+            NOT INVALID KEY
+                IF LK-OWNER = LS-OWNER
+                    DELETE LOCK-FILE RECORD
+                END-IF
+        END-READ
+    END-IF
+    CLOSE LOCK-FILE.
+
+REG-ACQUIRE.
+    MOVE "W" TO WS-KF-MODE
+    CALL "KFLOCK" USING WS-KF-MODE WS-DATA-DIR WS-REG-NAME
+        WS-KF-STATUS.
+
+REG-RELEASE.
+    MOVE "R" TO WS-KF-MODE
+    CALL "KFLOCK" USING WS-KF-MODE WS-DATA-DIR WS-REG-NAME
+        WS-KF-STATUS.

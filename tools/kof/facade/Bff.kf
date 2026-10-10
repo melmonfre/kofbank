@@ -8,6 +8,43 @@ OwnerCheck ownedAccount(String accountId) {
     return OwnerCheck(true, valueOf(acct, "customer"))
 }
 
+record LifeRc(String rc, String status, String msg)
+
+LifeRc stepLife(String op, String txnId, String actor, String corr, String reqId) {
+    var r = txnRequest(op, txnId, actor, corr, reqId)
+    return LifeRc(r.rc, r.status, r.msg)
+}
+
+String driveLifecycle(String txnId, String actor, String corr, String reqId, String what) {
+    var au = stepLife("authorize", txnId, actor, corr, reqId + "-AU")
+    var po = stepLife("post", txnId, actor, corr, reqId + "-PO")
+    var st = stepLife("settle", txnId, actor, corr, reqId + "-ST")
+    var cp = stepLife("complete", txnId, actor, corr, reqId + "-CP")
+    if (au.status == "UNKNOWN" || po.status == "UNKNOWN" || st.status == "UNKNOWN" || cp.status == "UNKNOWN") {
+        return status(504, errJson("UNKNOWN_OUTCOME", what + " outcome pending for txn " + txnId + "; inspect by transaction id, never blind-retry", "UNKNOWN", "24", au.msg + "/" + po.msg + "/" + st.msg + "/" + cp.msg, corr, false))
+    }
+    if (cp.status != "CP") {
+        return status(502, errJson("LIFECYCLE_INCOMPLETE", "txn " + txnId + " did not reach completed state", "INFRASTRUCTURE", au.rc + po.rc + st.rc + cp.rc, "au=" + au.status + " po=" + po.status + " st=" + st.status + " cp=" + cp.status, corr, false))
+    }
+    return ""
+}
+
+String classifyCreate(LifeRc c, String corr, String what) {
+    if (c.rc == "24") {
+        return status(504, errJson("UNKNOWN_OUTCOME", what + " outcome pending; resolve by request identity before any retry", "UNKNOWN", c.rc, c.msg, corr, false))
+    }
+    if (c.rc == "26") {
+        return status(409, errJson("IDEMPOTENCY_CONFLICT", "payload differs under known request identity", "CONFLICT", c.rc, c.msg, corr, false))
+    }
+    if (c.rc == "20" || c.rc == "22") {
+        return status(422, errJson("BUSINESS_REJECTION", c.msg, "BUSINESS", c.rc, c.msg, corr, false))
+    }
+    if (c.rc != "00") {
+        return status(502, errJson("UNCLASSIFIED_CORE_RC", "unexpected " + what + " return code", "INFRASTRUCTURE", c.rc, c.msg, corr, false))
+    }
+    return ""
+}
+
 String sessionUserOr401() {
     var id = identify(header("x-session-token"))
     if (id.ok()) {
@@ -70,6 +107,9 @@ Void serveOn(Int port) {
         }
         var cust = fieldOf(who, 1, ".")
         var accountId = param("id")
+        if (!accountIdOk(accountId)) {
+            return status(400, errJson("INVALID_ACCOUNT_ID", "account id shape rejected", "VALIDATION", "", "", "", false))
+        }
         var own = ownedAccount(accountId)
         if (!own.ok()) {
             return status(404, errJson("ACCOUNT_NOT_FOUND", "no such account in core", "NOT_FOUND", "23", "", "", false))
@@ -88,6 +128,9 @@ Void serveOn(Int port) {
         }
         var cust = fieldOf(who, 1, ".")
         var accountId = param("id")
+        if (!accountIdOk(accountId)) {
+            return status(400, errJson("INVALID_ACCOUNT_ID", "account id shape rejected", "VALIDATION", "", "", "", false))
+        }
         var own = ownedAccount(accountId)
         if (!own.ok()) {
             return status(404, errJson("ACCOUNT_NOT_FOUND", "no such account in core", "NOT_FOUND", "23", "", "", false))
@@ -110,6 +153,9 @@ Void serveOn(Int port) {
         }
         var cust = fieldOf(who, 1, ".")
         var accountId = param("id")
+        if (!accountIdOk(accountId)) {
+            return status(400, errJson("INVALID_ACCOUNT_ID", "account id shape rejected", "VALIDATION", "", "", "", false))
+        }
         var own = ownedAccount(accountId)
         if (!own.ok()) {
             return status(404, errJson("ACCOUNT_NOT_FOUND", "no such account in core", "NOT_FOUND", "23", "", "", false))
@@ -138,6 +184,9 @@ Void serveOn(Int port) {
         }
         var cust = fieldOf(who, 1, ".")
         var txnId = param("id")
+        if (!txnIdOk(txnId)) {
+            return status(400, errJson("INVALID_TXN_ID", "transaction id shape rejected", "VALIDATION", "", "", "", false))
+        }
         var rec = txnGet(txnId)
         var mapped = mapCoreToHttp(rec, "")
         if (mapped != "") {
@@ -166,6 +215,9 @@ Void serveOn(Int port) {
         var user = fieldOf(who, 0, "")
         var cust = fieldOf(who, 1, ".")
         var accountId = param("id")
+        if (!accountIdOk(accountId)) {
+            return status(400, errJson("INVALID_ACCOUNT_ID", "account id shape rejected", "VALIDATION", "", "", "", false))
+        }
         var own = ownedAccount(accountId)
         if (!own.ok()) {
             return status(404, errJson("ACCOUNT_NOT_FOUND", "no such account in core", "NOT_FOUND", "23", "", "", false))
@@ -178,30 +230,133 @@ Void serveOn(Int port) {
             return status(400, errJson("INVALID_DEPOSIT_BODY", parsed.reason(), "VALIDATION", "", "", parsed.correlationId(), false))
         }
         var corr = parsed.correlationId()
+        if (!parsed.ok() && parsed.reason() == "") {
+            return status(400, errJson("INVALID_DEPOSIT_BODY", "unparseable body", "VALIDATION", "", "", "", false))
+        }
         var dep = deposit(accountId, parsed.amount(), parsed.description(), "BFF-" + user, corr, parsed.requestId())
-        if (dep.rc == "24" || dep.rc == "26" || dep.rc == "20" || dep.rc == "22") {
-            if (dep.rc == "24") {
-                return status(504, errJson("UNKNOWN_OUTCOME", "deposit outcome pending; resolve by request identity before any retry", "UNKNOWN", dep.rc, dep.msg, corr, false))
-            }
-            if (dep.rc == "26") {
-                return status(409, errJson("IDEMPOTENCY_CONFLICT", "payload differs under known request identity", "CONFLICT", dep.rc, dep.msg, corr, false))
-            }
-            return status(422, errJson("BUSINESS_REJECTION", dep.msg, "BUSINESS", dep.rc, dep.msg, corr, false))
+        var badC = classifyCreate(LifeRc(dep.rc, dep.status, dep.msg), corr, "deposit")
+        if (badC != "") {
+            return badC
         }
-        if (dep.rc != "00") {
-            return status(502, errJson("UNCLASSIFIED_CORE_RC", "unexpected deposit return code", "INFRASTRUCTURE", dep.rc, dep.msg, corr, false))
-        }
-        var au = txnRequest("authorize", dep.id, "BFF-" + user, corr, parsed.requestId() + "-AU")
-        var po = txnRequest("post", dep.id, "BFF-" + user, corr, parsed.requestId() + "-PO")
-        var st = txnRequest("settle", dep.id, "BFF-" + user, corr, parsed.requestId() + "-ST")
-        var cp = txnRequest("complete", dep.id, "BFF-" + user, corr, parsed.requestId() + "-CP")
-        if (au.status == "UNKNOWN" || po.status == "UNKNOWN" || st.status == "UNKNOWN" || cp.status == "UNKNOWN") {
-            return status(504, errJson("UNKNOWN_OUTCOME", "lifecycle transition pending for txn " + dep.id, "UNKNOWN", "24", au.msg + "/" + po.msg + "/" + st.msg + "/" + cp.msg, corr, false))
-        }
-        if (cp.status != "CP") {
-            return status(502, errJson("LIFECYCLE_INCOMPLETE", "txn " + dep.id + " did not reach completed state", "INFRASTRUCTURE", au.rc + po.rc + st.rc + cp.rc, "au=" + au.status + " po=" + po.status + " st=" + st.status + " cp=" + cp.status, corr, false))
+        var badL = driveLifecycle(dep.id, "BFF-" + user, corr, parsed.requestId(), "deposit")
+        if (badL != "") {
+            return badL
         }
         return json.encode(OpResponse("COMPLETED", dep.id, "deposit completed by core", corr))
+    }
+
+    app.get("/api/operations/:requestId") {
+        var who = sessionUserOr401()
+        if (who == "") {
+            return status(401, errJson("UNAUTHENTICATED", "missing or invalid session token", "AUTHENTICATION", "", "", "", false))
+        }
+        var cust = fieldOf(who, 1, ".")
+        var reqId = param("requestId")
+        if (!requestIdOk(reqId)) {
+            return status(400, errJson("INVALID_REQUEST_ID", "request id shape rejected", "VALIDATION", "", "", "", false))
+        }
+        var rec = idmLookup(reqId)
+        var idmState = rcOf(rec)
+        if (idmState != "R" && idmState != "C" && idmState != "F" && idmState != "23") {
+            return status(502, errJson("BAD_GATEWAY_REPLY", "operation lookup failed", "INFRASTRUCTURE", idmState, "", reqId, true))
+        }
+        var res = valueOf(rec, "result")
+        var operation = valueOf(rec, "operation")
+        var txnId = ""
+        if (res.length() >= 12) {
+            txnId = res.substring(0, 12)
+        }
+        var txnExists = false
+        var txnStatus = ""
+        var journalEvidence = false
+        if (txnIdOk(txnId)) {
+            var txn = txnGet(txnId)
+            if (rcOf(txn) == "00") {
+                txnExists = true
+                txnStatus = valueOf(txn, "status")
+                var srcAcct = valueOf(txn, "source")
+                var dstAcct = valueOf(txn, "destination")
+                var allowed = false
+                if (srcAcct != "" && ownedAccount(srcAcct).ok() && ownedAccount(srcAcct).custId() == cust) {
+                    allowed = true
+                }
+                if (dstAcct != "" && ownedAccount(dstAcct).ok() && ownedAccount(dstAcct).custId() == cust) {
+                    allowed = true
+                }
+                if (!allowed) {
+                    return status(403, errJson("FORBIDDEN", "operation not visible to this subject", "AUTHORIZATION", "", "", reqId, false))
+                }
+                var jr = journal("TXN" + txnId + "-P")
+                journalEvidence = valueOf(jr, "found") != "" && valueOf(jr, "found") != "0000"
+            }
+        }
+        var v = reconcileOperation(idmState, operation, txnExists, txnStatus, journalEvidence)
+        var shownTxn = ""
+        if (v.discloseTxn()) {
+            shownTxn = txnId
+        }
+        var msg = v.action()
+        if (v.verdict() == "RECONCILIATION_REQUIRED") {
+            msg = "outcome not established by durable state; reconcile via recover or inspect the transaction; never auto-repost"
+        }
+        return json.encode(OperationDto(v.verdict(), shownTxn, txnStatus, yesNo(v.effectApplied()), v.action(), v.retryable(), msg, ""))
+    }
+
+    app.post("/api/accounts/:id/transfers") {
+        var who = sessionUserOr401()
+        if (who == "") {
+            return status(401, errJson("UNAUTHENTICATED", "missing or invalid session token", "AUTHENTICATION", "", "", "", false))
+        }
+        var user = fieldOf(who, 0, "")
+        var cust = fieldOf(who, 1, ".")
+        var srcId = param("id")
+        if (!accountIdOk(srcId)) {
+            return status(400, errJson("INVALID_ACCOUNT_ID", "account id shape rejected", "VALIDATION", "", "", "", false))
+        }
+        var own = ownedAccount(srcId)
+        if (!own.ok()) {
+            return status(404, errJson("ACCOUNT_NOT_FOUND", "no such account in core", "NOT_FOUND", "23", "", "", false))
+        }
+        if (own.custId() != cust) {
+            return status(403, errJson("FORBIDDEN", "account belongs to another subject", "AUTHORIZATION", "", "", "", false))
+        }
+        var m = mapOf<String, String>()
+        if (looksJson(body())) {
+            m = flatJsonToMap(body())
+        } else {
+            return status(400, errJson("INVALID_TRANSFER_BODY", "malformed json body", "VALIDATION", "", "", mapGet(m, "correlationId"), false))
+        }
+        var amount = mapGet(m, "amount")
+        var dest = mapGet(m, "to")
+        var descr = mapGet(m, "description")
+        var reqId = mapGet(m, "requestId")
+        var corr = mapGet(m, "correlationId")
+        if (amount == "" || reqId == "" || dest == "") {
+            return status(400, errJson("INVALID_TRANSFER_BODY", "amount, to and requestId are required", "VALIDATION", "", "", corr, false))
+        }
+        if (!numericText(amount)) {
+            return status(400, errJson("INVALID_TRANSFER_BODY", "amount must be integer cents", "VALIDATION", "", "", corr, false))
+        }
+        if (!accountIdOk(dest)) {
+            return status(400, errJson("INVALID_TRANSFER_BODY", "destination account id shape rejected", "VALIDATION", "", "", corr, false))
+        }
+        if (!requestIdOk(reqId) || (corr != "" && !requestIdOk(corr)) || !safeText(descr, 40)) {
+            return status(400, errJson("INVALID_TRANSFER_BODY", "identifiers and description must be safe text", "VALIDATION", "", "", corr, false))
+        }
+        var cur = mapGet(m, "currency")
+        if (cur == "") {
+            cur = "BRL"
+        }
+        var created = transfer(srcId, dest, amount, cur, descr, "BFF-" + user, corr, reqId)
+        var badC = classifyCreate(LifeRc(created.rc, created.status, created.msg), corr, "transfer")
+        if (badC != "") {
+            return badC
+        }
+        var badL = driveLifecycle(created.id, "BFF-" + user, corr, reqId, "transfer")
+        if (badL != "") {
+            return badL
+        }
+        return json.encode(OpResponse("COMPLETED", created.id, "transfer completed by core", corr))
     }
 
     app.listen(port)

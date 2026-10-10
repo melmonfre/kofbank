@@ -1,0 +1,135 @@
+String HOME_DIR() {
+    return config.env("BANK_HOME")
+}
+
+Void seedH() {
+    raw("ledger.init")
+    createCustomer("HA", "61010101000101", "SEED", "HA-A")
+    createCustomer("HB", "61010101000290", "SEED", "HB-A")
+    raw("account.open|C00000000001|DMND|BRL|1000000|SEED|HA-O|HA-RO")
+    raw("account.open|C00000000002|DMND|BRL|0|SEED|HB-O|HB-RO")
+}
+
+Void racerCreate(String slot, String reqId, String amount) {
+    var home = HOME_DIR()
+    var res = shell.pipeline(listOf(
+        listOf("printf", "txn.create|TRANSFER|A00000000001|A00000000002|" + amount + "|BRL|H|x" + slot + "|HC" + slot + "|" + reqId + "\n"),
+        listOf("env", "BANK_HOME=" + home, "COB_LIBRARY_PATH=" + home + "/build", home + "/build/bank"),
+        listOf("sh", "-c", "grep -E '^rc=' > " + home + "/var/run/h_" + slot + ".rc")))
+}
+
+Void racerPost(String slot, String txnId, String reqId) {
+    var home = HOME_DIR()
+    shell.pipeline(listOf(
+        listOf("printf", "txn.post|" + txnId + "|x" + slot + "|HC" + slot + "|" + reqId + "\n"),
+        listOf("env", "BANK_HOME=" + home, "COB_LIBRARY_PATH=" + home + "/build", home + "/build/bank"),
+        listOf("sh", "-c", "grep -E '^rc=' > " + home + "/var/run/h_" + slot + ".prc")))
+}
+
+String readFile(String path) {
+    var r = shell.pipeline(listOf(listOf("cat", path)))
+    return r.stdout.trim()
+}
+
+Int countWhere(String hay, String needle) {
+    var n = 0
+    var i = 0
+    var step = needle.length()
+    if (step == 0) {
+        return 0
+    }
+    while (i + step <= hay.length()) {
+        if (hay.substring(i, i + step) == needle) {
+            n = n + 1
+            i = i + step
+        } else {
+            i = i + 1
+        }
+    }
+    return n
+}
+
+main() {
+    var f = 0
+    var home = HOME_DIR()
+    seedH()
+    var base0 = countWhere(txnList("C00000000001").text, "id=")
+
+    var reqA = "H-SAME-REQ"
+    spawn racerCreate("1", reqA, "10000")
+    spawn racerCreate("2", reqA, "10000")
+    spawn racerCreate("3", reqA, "10000")
+    spawn racerCreate("4", reqA, "10000")
+    spawn racerCreate("5", reqA, "10000")
+    spawn racerCreate("6", reqA, "10000")
+    time.sleep(8000)
+    var sameRes = readFile(home + "/var/run/h_1.rc") + "," + readFile(home + "/var/run/h_2.rc") + "," + readFile(home + "/var/run/h_3.rc") + "," + readFile(home + "/var/run/h_4.rc") + "," + readFile(home + "/var/run/h_5.rc") + "," + readFile(home + "/var/run/h_6.rc")
+    var okCount = countWhere(sameRes, "rc=00")
+    var progCount = countWhere(sameRes, "rc=24")
+    var mismCount = countWhere(sameRes, "rc=26")
+    f = f + tcheck("H1.1 winnerCommitted", okCount >= 1)
+    f = f + tcheck("H1.contendersClassified", progCount + mismCount == 6 - okCount)
+    var baseAfter = countWhere(txnList("C00000000001").text, "id=")
+    f = f + tcheck("H1.exactlyOneTxn", baseAfter - base0 == 1)
+    var ins = opsInspect()
+    f = f + tcheck("H2.storeCleanAfterSame", valueOf(ins, "class") == "CLEAN")
+    var lockCount = countWhere(raw("ops.locks.list").text, "lock=")
+    f = f + tcheck("H2.noLockLeak", lockCount == 0)
+
+    var seqBase = countWhere(txnList("C00000000001").text, "id=")
+    var s1 = transfer("A00000000001", "A00000000002", "5000", "BRL", "S1", "SEED", "HC-S1", "H-S-1")
+    var s2 = transfer("A00000000001", "A00000000002", "5000", "BRL", "S2", "SEED", "HC-S2", "H-S-2")
+    var s3 = transfer("A00000000001", "A00000000002", "5000", "BRL", "S3", "SEED", "HC-S3", "H-S-3")
+    var seqMade = countWhere(txnList("C00000000001").text, "id=") - seqBase
+    f = f + tcheck("H3.sequential.allProgress", s1.rc == "00" && s2.rc == "00" && s3.rc == "00" && seqMade == 3)
+    f = f + tcheck("H3.sequential.uniqueIds", s1.id != s2.id && s2.id != s3.id && s1.id != s3.id)
+
+    var baseD = countWhere(txnList("C00000000001").text, "id=")
+    spawn racerCreate("7", "H-D-7", "5000")
+    spawn racerCreate("8", "H-D-8", "5000")
+    spawn racerCreate("9", "H-D-9", "5000")
+    spawn racerCreate("10", "H-D-10", "5000")
+    spawn racerCreate("11", "H-D-11", "5000")
+    spawn racerCreate("12", "H-D-12", "5000")
+    time.sleep(8000)
+    var baseD2 = countWhere(txnList("C00000000001").text, "id=")
+    var madeD = baseD2 - baseD
+    var insD = opsInspect()
+    f = f + tcheck("H3.concurrent.noCorruption", valueOf(insD, "class") != "CORRUPT")
+    f = f + tcheck("H3.concurrent.allDistinctCommit", madeD == 6)
+    var trD = trialBalance()
+    f = f + tcheck("H3.concurrent.trialBalanced", rcOf(trD) == "00" && valueOf(trD, "total-debit") == valueOf(trD, "total-credit"))
+    f = f + tcheck("H3.concurrent.locksReleased", countWhere(raw("ops.locks.list").text, "lock=") == 0)
+
+    var cReq = "H-FULL-REQ"
+    var fc = transfer("A00000000001", "A00000000002", "20000", "BRL", "FULL", "x0", "HCFULL", cReq)
+    var fTxn = fc.id
+    txnRequest("authorize", fTxn, "x0", "HCFULL", cReq + "-AU")
+    spawn racerPost("a", fTxn, "H-FULL-PO-a")
+    spawn racerPost("b", fTxn, "H-FULL-PO-b")
+    spawn racerPost("c", fTxn, "H-FULL-PO-c")
+    spawn racerPost("d", fTxn, "H-FULL-PO-d")
+    time.sleep(8000)
+    var prc = readFile(home + "/var/run/h_a.prc") + "," + readFile(home + "/var/run/h_b.prc") + "," + readFile(home + "/var/run/h_c.prc") + "," + readFile(home + "/var/run/h_d.prc")
+    var pOk = countWhere(prc, "rc=00")
+    var pHeld = countWhere(prc, "rc=24")
+    f = f + tcheck("H4.postSerialized", pOk >= 1 && pOk + pHeld == 4)
+    var jp = journal("TXN" + fTxn + "-P")
+    f = f + tcheck("H4.journalOnce", valueOf(jp, "found") == "0001" && valueOf(jp, "lines") == "0002")
+    var jDebit = valueOf(jp, "debit")
+    var jCredit = valueOf(jp, "credit")
+    f = f + tcheck("H4.journalBalanced", jDebit != "" && jDebit == jCredit)
+
+    var tr = trialBalance()
+    f = f + tcheck("H5.trialBalanced", rcOf(tr) == "00" && valueOf(tr, "total-debit") == valueOf(tr, "total-credit"))
+    var ins2 = opsInspect()
+    f = f + tcheck("H5.storeCleanFinal", valueOf(ins2, "class") == "CLEAN" && valueOf(ins2, "txn-pend") == "00000")
+    f = f + tcheck("H5.locksReleased", countWhere(raw("ops.locks.list").text, "lock=") == 0)
+
+    if (f > 0) {
+        println("suiteH: " + f + " failed")
+        process.exit(1)
+    }
+    println("suiteH: passed")
+    process.exit(0)
+}

@@ -13,6 +13,13 @@ make eod
 
 - BANK_HOME: dataset root, set by Makefile
 - COB_LIBRARY_PATH: build
+- KOF_LOCK_TIMEOUT_MS: optional bounded wait (ms) for cross-process lock
+  acquisition (BLCK/BSEQ/BWR via KFLOCK). Unset = wait until granted, relying
+  on kernel release if the holder dies. Set = on expiry the acquisition fails
+  with status 62 and the operation fails closed (rc 24 / non-"00"); there is no
+  silent fallback to unsynchronised access. Keep >= 5000 in production so the
+  short critical sections never surface a timeout to clients (ADR 0022).
+- KOF_CRASH: QA-only crash-seam injection (ADR 0022); never set in production.
 
 ## observability
 

@@ -143,9 +143,18 @@ TxnReply withdraw(String account, String amount, String description, String oper
     return TxnReply(valueOf(reply, "rc"), valueOf(reply, "id"), valueOf(reply, "status"), valueOf(reply, "msg"))
 }
 
+TxnReply transfer(String src, String dst, String amount, String currency, String description, String operator, String correlation, String requestId) {
+    var reply = raw("txn.create|TRANSFER|" + src + "|" + dst + "|" + amount + "|" + currency + "|" + description + "|" + operator + "|" + correlation + "|" + requestId)
+    return TxnReply(valueOf(reply, "rc"), valueOf(reply, "id"), valueOf(reply, "status"), valueOf(reply, "msg"))
+}
+
 TxnReply reverse(String txnId, String reason, String operator, String correlation, String requestId) {
     var reply = raw("txn.reverse|" + txnId + "|" + reason + "|" + operator + "|" + correlation + "|" + requestId)
     return TxnReply(valueOf(reply, "rc"), valueOf(reply, "id"), valueOf(reply, "status"), valueOf(reply, "msg"))
+}
+
+BankReply idmLookup(String requestId) {
+    return raw("txn.lookup|" + requestId)
 }
 
 BankReply recover(String txnId) {

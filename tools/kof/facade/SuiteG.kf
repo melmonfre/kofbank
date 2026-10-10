@@ -1,0 +1,114 @@
+String ledOf(String account) {
+    var b = balance(account)
+    return valueOf(b, "ledger")
+}
+
+Bool jrnOnce(String txnId) {
+    var j = journal("TXN" + txnId + "-P")
+    return valueOf(j, "found") == "0001" && valueOf(j, "lines") == "0002"
+}
+
+BankReply crashPost(String txnId, String seam, String reqId) {
+    var home = config.env("BANK_HOME")
+    var res = shell.pipeline(listOf(
+        listOf("printf", "txn.post|" + txnId + "|SEED|CORX|" + reqId + "\n"),
+        listOf("env", "KOF_CRASH=" + seam, home + "/build/bank")))
+    return BankReply(res.exitCode, res.stdout, res.stderr)
+}
+
+main() {
+    var f = 0
+    var base = "http://127.0.0.1:8991"
+    seedFacade()
+    spawn serveOn(8991)
+    time.sleep(1500)
+    var ana = "SES.ana.C00000000001"
+    var rich0 = ledOf("A00000000001")
+
+    f = f + tcheck("G1.b1.baseline", rich0 != "")
+
+    var b1 = p(base, "/api/accounts/A00000000001/transfers", ana, "{\"amount\":\"9000000000000\",\"to\":\"A00000000002\",\"description\":\"GHOST-NOFUND\",\"requestId\":\"G-B1\",\"correlationId\":\"G1C\"}")
+    f = f + tcheck("G1.b1.reject", b1.contains("BUSINESS_REJECTION") || b1.contains("INSUFFICIENT"))
+    f = f + tcheck("G1.b1.noeffect", ledOf("A00000000001") == rich0)
+    var b1op = g(base, "/api/operations/G-B1", ana)
+    f = f + tcheck("G1.b1.notfound", b1op.contains("\"verdict\":\"NON_COMMITTED_SAFE\"") || b1op.contains("NOT_FOUND"))
+
+    var c2 = transfer("A00000000001", "A00000000002", "40000", "BRL", "G2", "SEED", "G2C", "G2-REQ")
+    var t2 = c2.id
+    txnRequest("authorize", t2, "SEED", "G2C", "G2-AU")
+    var opBeforeCrash = g(base, "/api/operations/G2-REQ", ana)
+    f = f + tcheck("G2.created.visible-not-success", !opBeforeCrash.contains("\"verdict\":\"COMMITTED\"") && (opBeforeCrash.contains("\"verdict\":\"VISIBLE\"") || opBeforeCrash.contains("\"verdict\":\"RECONCILIATION_REQUIRED\"")))
+    var cr2 = crashPost(t2, "AFTER-JRN", "G2-PO")
+    f = f + tcheck("G2.seam.rc90", valueOf(cr2, "rc") == "90")
+    var st2 = g(base, "/api/transactions/" + t2, ana)
+    f = f + tcheck("G2.txn.still.au", st2.contains("\"status\":\"AU\""))
+    f = f + tcheck("G2.balances.unchanged", ledOf("A00000000001") == rich0)
+    f = f + tcheck("G2.journal.durable", jrnOnce(t2))
+    var op2 = g(base, "/api/operations/G2-REQ", ana)
+    f = f + tcheck("G2.op.visible", op2.contains("\"verdict\":\"VISIBLE\"") && op2.contains("\"effectApplied\":\"no\"") && op2.contains("\"retryable\":false") && op2.contains(t2))
+    var rcv2 = recover(t2)
+    f = f + tcheck("G2.recover", rcOf(rcv2) == "00")
+    f = f + tcheck("G2.journal.once.after.recover", jrnOnce(t2))
+    var op2b = g(base, "/api/operations/G2-REQ", ana)
+    f = f + tcheck("G2.op.committed", op2b.contains("\"verdict\":\"COMMITTED\"") && op2b.contains("\"effectApplied\":\"yes\"") && op2b.contains(t2))
+
+    var richAfter2 = ledOf("A00000000001")
+    var c3 = transfer("A00000000001", "A00000000002", "50000", "BRL", "G3", "SEED", "G3C", "G3-REQ")
+    var t3 = c3.id
+    txnRequest("authorize", t3, "SEED", "G3C", "G3-AU")
+    var cr3 = crashPost(t3, "AFTER-BAL", "G3-PO")
+    f = f + tcheck("G3.seam.rc90", valueOf(cr3, "rc") == "90")
+    f = f + tcheck("G3.bal.applied", ledOf("A00000000001") != richAfter2)
+    var balApplied = ledOf("A00000000001")
+    var rcv3 = recover(t3)
+    f = f + tcheck("G3.recover", rcOf(rcv3) == "00")
+    f = f + tcheck("G3.no.double.bal", ledOf("A00000000001") == balApplied)
+    f = f + tcheck("G3.journal.once", jrnOnce(t3))
+
+    var richAfter3 = ledOf("A00000000001")
+    var c4 = transfer("A00000000001", "A00000000002", "60000", "BRL", "G4", "SEED", "G4C", "G4-REQ")
+    var t4 = c4.id
+    txnRequest("authorize", t4, "SEED", "G4C", "G4-AU")
+    var cr4 = crashPost(t4, "AFTER-PST", "G4-PO")
+    f = f + tcheck("G4.seam.rc90", valueOf(cr4, "rc") == "90")
+    f = f + tcheck("G4.bal.applied", ledOf("A00000000001") != richAfter3)
+    f = f + tcheck("G4.txn.still.au", g(base, "/api/transactions/" + t4, ana).contains("\"status\":\"AU\""))
+    var rcv4 = recover(t4)
+    f = f + tcheck("G4.recover.po", rcOf(rcv4) == "00")
+    f = f + tcheck("G4.recover.already", recover(t4).text.contains("ALREADY COMMITTED"))
+    f = f + tcheck("G4.journal.once", jrnOnce(t4))
+
+    var richAfter4 = ledOf("A00000000001")
+    var c5 = transfer("A00000000001", "A00000000002", "70000", "BRL", "G5", "SEED", "G5C", "G5-REQ")
+    var t5 = c5.id
+    txnRequest("authorize", t5, "SEED", "G5C", "G5-AU")
+    var cr5 = crashPost(t5, "AFTER-POST", "G5-PO")
+    f = f + tcheck("G5.seam.rc90", valueOf(cr5, "rc") == "90")
+    f = f + tcheck("G5.bal.applied.before.seam", ledOf("A00000000001") != richAfter4)
+    var balAfterCrash5 = ledOf("A00000000001")
+    var op5life = g(base, "/api/operations/G5-PO", ana)
+    f = f + tcheck("G5.lifecycle.attempt.unestablishable", op5life.contains("\"verdict\":\"RECONCILIATION_REQUIRED\"") && op5life.contains("\"retryable\":false"))
+    var cr5repost = crashPost(t5, "AFTER-POST", "G5-PO")
+    f = f + tcheck("G5.repost.rc22.duplicate", valueOf(cr5repost, "rc") == "22")
+    f = f + tcheck("G5.repost.noeffect", ledOf("A00000000001") == balAfterCrash5)
+    f = f + tcheck("G5.journal.once", jrnOnce(t5))
+    var rcv5 = recover(t5)
+    f = f + tcheck("G5.recover.po", rcOf(rcv5) == "00")
+    f = f + tcheck("G5.recover.already", recover(t5).text.contains("ALREADY COMMITTED"))
+    f = f + tcheck("G5.bal.no.double", ledOf("A00000000001") == balAfterCrash5)
+
+    var trial = trialBalance()
+    f = f + tcheck("G6.trial.balanced", rcOf(trial) == "00" && valueOf(trial, "total-debit") == valueOf(trial, "total-credit"))
+    var ins = opsInspect()
+    f = f + tcheck("G6.store.clean", valueOf(ins, "class") == "CLEAN" && valueOf(ins, "txn-pend") == "00000")
+
+    var d1 = g(base, "/api/accounts/A00000000001/transactions", ana)
+    f = f + tcheck("G7.history.reflects.committed", d1.contains(t5) && d1.contains(t2))
+
+    if (f > 0) {
+        println("suiteG: " + f + " failed")
+        process.exit(1)
+    }
+    println("suiteG: passed")
+    process.exit(0)
+}

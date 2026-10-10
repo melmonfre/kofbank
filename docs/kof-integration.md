@@ -111,10 +111,115 @@ The example implements a salary disbursement batch:
 | Process & Infra Safety | 5 | `infra.fail.exit` (`exit!=0`), `infra.fail.classified` (`INFRA_FAIL`), `infra.fail.operational`, `infra.stderr.separated`, `unknown.reply.safe` |
 | **Total Automated** | **48** | **`make kof-test` (48 passed, 0 failed)** |
 | **Consumer Example** | **1** | **`make kof-example` (3 salaries paid, ledger conserved, exit 0)** |
-| **COBOL Core Suite** | **1616** | **`make test` (1616 passed, 0 failed)** |
-| **Facade Slice** | **38** | **`make kof-facade-test` (suiteA+B+C, 0 failed)** |
+| **COBOL Core Suite** | **1627** | **`make test` (1627 passed, 0 failed)** |
+| **Facade Slice** | **183** | **`make kof-facade-test` (suites A-I, 0 failed)** |
 
-## Application facade (KBAPP-1) — first vertical slice
+## Application facade (KBAPP-1) — transfer vertical slice
+
+### Controlled transfer flow
+`POST /api/accounts/:id/transfers` (body: amount cents, to, description?,
+requestId, correlationId?) drives the existing COBOL lifecycle only:
+`txn.create|TRANSFER|...` then authorize->post->settle->complete through KBCLI-1.
+No second ledger, no application-side state machine: the core decides.
+Guarantees asserted end-to-end (suite D):
+- exact replay of the same request id + same payload returns the same durable
+  transaction reference with zero additional financial effect;
+- same request id + changed payload -> 409 IDEMPOTENCY_CONFLICT (core rc 26);
+- insufficient funds / unknown or inactive destination / self-transfer / currency
+  mismatch are core business rejections (422) with no effect;
+- concurrent duplicate submissions (twin test) resolve to one effect; every
+  response reports a reconciled `verdict` (COMMITTED / VISIBLE / NON_COMMITTED_SAFE /
+  RECONCILIATION_REQUIRED / CONFIRMED_NOT_EFFECTIVE) as a normal body; only a
+  committed, evidenced transaction is ever shown as done, and undetermined outcomes
+  are never marked retryable;
+- crash seam (KOF_CRASH=AFTER-POST, QA env injection through raw client, never
+  through production config) leaves a FAIL-marked idempotency record; `txn.recover`
+  finishes the posting exactly once (journal found=1 lines=2);
+- GET /api/operations/:requestId reconciles by request identity against the
+  core idempotency store (new read-only KBCLI-1 verb `txn.lookup`, modes
+  R=in progress / undetermined -> RECONCILIATION_REQUIRED (200, never
+  retryable=true, account-ownership enforced), C=committed+evidence -> COMMITTED
+  with durable txn ref, failed create with no txn -> NON_COMMITTED_SAFE
+  (retryable), absent -> NOT_FOUND);
+- restart durability (suite F): a second BFF process over the same store shows
+  the identical balance, history, detail and lookup result; replay after
+  restart still never double-posts; journal trial stays balanced and store
+  CLEAN at slice end.
+
+### Security boundary (suite E, all against the real core)
+- session token must be exactly `SES.<user>.<customer>` (dot-count enforced);
+  forged suffixes, swapped pairs and unknown users are rejected;
+- account/transaction ids are shape-validated at the boundary; KBCLI-1 fields
+  are fixed-width PIC X and silently truncate, so a wider id (for example
+  `A00000000001X`) would alias to a real account without the guard. The guard
+  closes aliasing for every :id route;
+- pipe/newline injection and over-width request ids are rejected before the
+  CLI contract is touched (core fields: request/correlation 24, description 40);
+- error bodies carry only app-level categories, coreRc and correlation — no
+  paths, no file layout, no credentials, no stack details;
+- every data route fails closed with 401 without a valid token; deposits and
+  transfers enforce source ownership before any core mutation; transaction
+  detail is visible only to owners on either side.
+
+### Core fix found during this slice
+`BTXNVAL.cbl` V-TRANSFER checked funds against the destination account
+(stale `WS-ACCT-ID-WS`) — rich-source transfers were wrongly rejected and
+poor-source overdrafts could pass validation. Fixed to check the source;
+11 new COBOL regression checks cover direction, self-transfer, currency and
+lookup states (COBOL suite now 1627).
+
+### Resilience & concurrency hardening (slice 3, suites G/H/I)
+Suite G proves the crash boundaries through the facade path (not just the raw
+client): for each `KOF_CRASH` seam (ledger AFTER-JRN / AFTER-BAL / AFTER-PST, txn
+AFTER-POST) it asserts balances/journal durability, that `txn.recover` resumes the
+staged write and completes it exactly once (journal `found=1 lines=2`), and that the
+operation reconciles to the right verdict - a lifecycle attempt that crashed after
+post reads as `RECONCILIATION_REQUIRED` (never auto-reposted), a repost is a core
+duplicate with zero added effect.
+
+Suite H proves cross-process behaviour with real OS subprocesses (`spawn` = fork):
+- H1: concurrent **same-requestId** creates resolve to exactly one transaction. This
+  required a core fix - `BTXNLFC` now serializes the `BEGIN -> create -> COMPLETE`
+  idempotency window under a `BLCK` lock keyed by `"CR"+BHSH(requestId)` and
+  releases it on every exit path (before the fix two racing creates each minted a
+  transaction for one key).
+- H4/H5: concurrent posts on one transaction are serialized (one effect, journal
+  once, trial balanced, store CLEAN, locks released).
+
+Suite I covers bounded load (a 10-request burst with a full replay pass asserting
+idempotent replay adds nothing and the trial stays balanced) and observability: a
+committed transfer is traced across the core stores via `ops.correlate` (txn id,
+journal ref, requestId) and the portal detail/operation views agree; a rejected
+transfer leaves `NON_COMMITTED_SAFE` (retryable) with no committed effect.
+
+**Cross-process locking (ADR 0022, resolved in slice 4).** `BLCK`, `BSEQ` and the
+durable store writers are now serialized by real OS locks via a native `flock(2)`
+helper (`KFLOCK`), not by optimistic ISAM claims. `BSEQ` allocates ids under a
+per-key lock (`SEQ-<name>`), `BLCK` performs its `lock.idx` check-and-set under a
+registry lock, and each store write (`txn/acct/cust` + the ledger post/recover)
+takes a leaf lock (`WR-TXN/ACCT/CUST/LEDGER/RC`) that is never nested with
+another leaf lock. A hard process kill is self-healing because the kernel frees
+the `flock` on death. So a *same-instant* burst of creates with **distinct**
+requestIds now yields unique ids with no lost create, and concurrent transfers
+conserve money (no lost balance update). Suite H asserts this positively
+(`H3.concurrent.allDistinctCommit`); `tests/concurrency.sh` (`make concurrency-test`,
+part of `make test`) drives deterministic multi-process bursts (44 checks): id
+uniqueness and no-lost-create, same-request idempotency and payload-mismatch
+rejection, transfer conservation, interrupted allocation (`KOF_CRASH=AFTER-SEQ`,
+gaps tolerated, no id reuse), bounded lock waiting with `KOF_LOCK_TIMEOUT_MS`
+(timeout surfaces as status `62` and fail-closed - there is no silent fallback;
+missing `KFLOCK.so` returns `EF`), stale-sweeper protection of live holds, and
+final durable inspection of the sequence store. Financial authority is
+unchanged - COBOL still owns every balance/ledger decision. Validated on local
+ext4 single host; `flock` semantics on NFS/distributed FS are not claimed.
+
+### Development-only auth (unchanged scope statement)
+### Development-only authentication boundary (unchanged)
+`ana`/`bob` dev identities and `X-Session-Token` remain a LOCAL QA model: no
+credential store, no expiry, no TLS. Production identity is an open gate, not
+delivered here.
+
+### Legacy slice notes (read-oriented portal)
 
 The Kof application layer (`tools/kof/facade/`) is a thin BFF between a UI and the
 KBCLI-1 COBOL boundary. Contract: frontend -> BFF HTTP JSON -> KBCLI-1 -> COBOL core.
@@ -131,9 +236,11 @@ Every error body carries `category`, `coreRc`, `correlationId`, `retryable`.
 
 Commands:
 - `make kof-facade-test` - resets QA state, seeds two funded customers + one empty,
-  runs 38 end-to-end checks (auth, ownership isolation, authoritative balance,
-  history/detail, idempotent replay, tamper conflict, malformed bodies, view states,
-  CLEAN store and balanced ledger at the end).
+  runs suites A-I (183 end-to-end checks): auth, ownership isolation, authoritative
+  balance/history/detail, idempotent replay, tamper conflict, malformed bodies, view
+  states, crash-seam recovery (G), cross-process idempotency/concurrency (H), bounded
+  load + correlation/observability + failure semantics (I), CLEAN store and balanced
+  ledger at the end.
 - `make kof-portal` - starts the BFF and exercises the portal flow (login, accounts,
   balance, history, detail) through the HTTP contract only.
 

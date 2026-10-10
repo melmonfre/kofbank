@@ -1,0 +1,64 @@
+main() {
+    var f = 0
+    var base = "http://127.0.0.1:8986"
+    seedFacade()
+    spawn serveOn(8986)
+    time.sleep(1200)
+    var ana = "SES.ana.C00000000001"
+    var body = "{\"amount\":\"15000\",\"to\":\"A00000000002\",\"description\":\"PERSIST ME\",\"requestId\":\"XF-P1\",\"correlationId\":\"XF-C1\"}"
+    var r1 = p(base, "/api/accounts/A00000000001/transfers", ana, body)
+    f = f + tcheck("f.xfer.committed", r1.contains("\"status\":\"COMPLETED\""))
+    var balBefore = g(base, "/api/accounts/A00000000001/balance", ana)
+    var txn = idOnly(between(r1, "\"txnId\":\"", ","))
+
+    var base2 = "http://127.0.0.1:8987"
+    spawn serveOn(8987)
+    time.sleep(1200)
+    var balAfter = g(base2, "/api/accounts/A00000000001/balance", ana)
+    f = f + tcheck("f.restart.balance", balAfter.contains("ledger") && balAfter == balBefore)
+    var histAfter = g(base2, "/api/accounts/A00000000001/transactions", ana)
+    f = f + tcheck("f.restart.history", histAfter.contains(txn))
+    var detailAfter = g(base2, "/api/transactions/" + txn, ana)
+    f = f + tcheck("f.restart.detail", detailAfter.contains("\"status\":\"CP\""))
+    var lkAfter = g(base2, "/api/operations/XF-P1", ana)
+    f = f + tcheck("f.restart.lookup", lkAfter.contains(txn))
+    var replay2 = p(base2, "/api/accounts/A00000000001/transfers", ana, body)
+    f = f + tcheck("f.restart.replay", replay2.contains(txn))
+    var bal2 = g(base2, "/api/accounts/A00000000001/balance", ana)
+    f = f + tcheck("f.restart.replay.once", bal2 == balAfter)
+    var trial = trialBalance()
+    f = f + tcheck("f.restart.trial", rcOf(trial) == "00" && valueOf(trial, "total-debit") == valueOf(trial, "total-credit"))
+    var ins = opsInspect()
+    f = f + tcheck("f.restart.store.clean", valueOf(ins, "class") == "CLEAN")
+
+    if (f > 0) {
+        println("suiteF: " + f + " failed")
+        process.exit(1)
+    }
+    println("suiteF: passed")
+    process.exit(0)
+}
+
+String idOnly(String v) {
+    var out = ""
+    var n = v.length()
+    for (var i = 0; i < n; i++) {
+        var c = v.substring(i, i + 1)
+        if (strings.isNumeric(c) || "ABCDEFGHIJKLMNOPQRSTUVWXYZ".contains(c)) {
+            out = out + c
+        }
+    }
+    return out
+}
+
+String between(String hay, String left, String stop) {
+    if (!hay.contains(left)) {
+        return ""
+    }
+    var rest = hay.substring(hay.indexOf(left) + left.length(), hay.length())
+    var e = rest.indexOf(stop)
+    if (e < 0) {
+        return rest
+    }
+    return rest.substring(0, e)
+}

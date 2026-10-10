@@ -18,6 +18,48 @@ UiView viewFrom(String payload) {
 
 record PortalSession(String base, String token, Bool loggedIn)
 
+record TransferForm(String fromAccount, String toAccount, String amountCents, String description, String requestId, String confirmed)
+
+Bool formValid(TransferForm fm) {
+    if (fm.fromAccount() == "" || fm.toAccount() == "" || fm.amountCents() == "") {
+        return false
+    }
+    if (fm.fromAccount() == fm.toAccount()) {
+        return false
+    }
+    var n = fm.amountCents().length()
+    for (var i = 0; i < n; i++) {
+        if (!strings.isNumeric(fm.amountCents().substring(i, i + 1))) {
+            return false
+        }
+    }
+    return fm.confirmed() == "yes"
+}
+
+UiView portalPreview(TransferForm fm) {
+    if (!formValid(fm)) {
+        return UiView("VALIDATION_ERROR", "Check source, destination, amount and confirmation", "")
+    }
+    return UiView("AWAITING_CONFIRMATION", "Send " + fm.amountCents() + " cents to " + fm.toAccount(), "")
+}
+
+String portalSubmitTransfer(PortalSession s, TransferForm fm) {
+    var body = "{\"amount\":\"" + fm.amountCents() + "\",\"to\":\"" + fm.toAccount() + "\",\"description\":\"" + fm.description() + "\",\"requestId\":\"" + fm.requestId() + "\"}"
+    return http.post(s.base() + "/api/accounts/" + fm.fromAccount() + "/transfers", body, "Content-Type: application/json", "X-Session-Token: " + s.token())
+}
+
+String portalInspectOperation(PortalSession s, String requestId) {
+    return http.get(s.base() + "/api/operations/" + requestId, "X-Session-Token: " + s.token())
+}
+
+UiView confirmOutcome(String payload) {
+    var v = viewFrom(payload)
+    if (v.state() == "UNKNOWN_OPERATION" || v.state() == "INFRA_ERROR") {
+        return UiView("HOLD", "Outcome not confirmed. Do not retry. Use operation inspection (request id) to resolve.", v.body())
+    }
+    return v
+}
+
 PortalSession portalNew(String base) {
     return PortalSession(base, "", false)
 }
@@ -88,5 +130,39 @@ Void portalDemo() {
     } else {
         showView("detail", UiView("EMPTY", "select a transaction first", ""))
     }
+    var fm = TransferForm("A00000000001", "A00000000002", "2500", "PORTAL XFER", "PORTAL-T1", "no")
+    showView("xfer-preview", portalPreview(fm))
+    fm = TransferForm("A00000000001", "A00000000002", "2500", "PORTAL XFER", "PORTAL-T1", "yes")
+    showView("xfer-confirmed-preview", portalPreview(fm))
+    var res = portalSubmitTransfer(s, fm)
+    showView("xfer-submit", confirmOutcome(res))
+    var xid = tokenBetween(res, "txnId")
+    if (xid != "") {
+        showView("xfer-after-balance", viewFrom(portalBalance(s, "A00000000001")))
+        showView("xfer-after-history", viewFrom(portalHistory(s, "A00000000001")))
+        showView("xfer-detail", viewFrom(portalDetail(s, xid)))
+    }
+    showView("xfer-inspect", viewFrom(portalInspectOperation(s, "PORTAL-T1")))
     process.exit(0)
+}
+
+String tokenBetween(String hay, String key) {
+    var marker = "\"" + key + "\":\""
+    if (!hay.contains(marker)) {
+        return ""
+    }
+    var rest = hay.substring(hay.indexOf(marker) + marker.length(), hay.length())
+    var stop = rest.indexOf(",")
+    if (stop < 0) {
+        stop = rest.indexOf("}")
+    }
+    var out = ""
+    var n = rest.substring(0, stop).length()
+    for (var i = 0; i < n; i++) {
+        var c = rest.substring(i, i + 1)
+        if (strings.isNumeric(c) || "ABCDEFGHIJKLMNOPQRSTUVWXYZ".contains(c)) {
+            out = out + c
+        }
+    }
+    return out
 }

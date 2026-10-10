@@ -1,7 +1,7 @@
 # KofBank — Production Readiness Review (GATE 5)
 
 Revision reviewed: `b391fdb` + working tree (GATE 4/5 hardening, uncommitted).
-Proof: `make clean && make build && make test` -> 1610 checks, 0 failed, stable
+Proof: `make clean && make build && make test` -> 1627 checks, 0 failed, stable
 across 3 consecutive full runs after a clean rebuild.
 
 This document is an audit of claims against executable code and tests. It does
@@ -225,7 +225,7 @@ validation only.
 
 ```
 git rev-parse HEAD                    # source revision
-make clean && make build && make test # must end: tests: 1610 ... failed: 0
+make clean && make build && make test # must end: tests: 1627 ... failed: 0
 make test && make test                # repeatability (no order/seed dependence)
 ```
 
