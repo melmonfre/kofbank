@@ -1,0 +1,68 @@
+IDENTIFICATION DIVISION.
+PROGRAM-ID. TESTBPXSPI.
+
+ENVIRONMENT DIVISION.
+INPUT-OUTPUT SECTION.
+
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+COPY "BPXSP".
+
+PROCEDURE DIVISION.
+    *> Test 1: Submit an in-flight SPI settlement with TIMEOUT simulation (outcome UNKNOWN)
+    MOVE SPACES TO BK-PX-SPI-PARMS
+    MOVE "FIXTURE"    TO SI-ADAPTER
+    MOVE "STL-SUBMIT" TO SI-OP
+    MOVE "STL-TEST-UNKNOWN-01" TO SI-E2E-ID
+    MOVE "REF-EXT-01" TO SI-EXT-REF
+    MOVE 150000.00    TO SI-AMOUNT
+    MOVE "BRL"        TO SI-CURRENCY
+    MOVE "TIMEOUT"    TO SI-SIM
+    CALL "BPXSPI" USING BK-PX-SPI-PARMS
+    DISPLAY "test=submit_unknown rc=" SI-RC " result=" FUNCTION TRIM(SI-RESULT)
+
+    *> Test 2: First query of the in-flight UNKNOWN settlement
+    MOVE SPACES TO BK-PX-SPI-PARMS
+    MOVE "FIXTURE"    TO SI-ADAPTER
+    MOVE "STL-QUERY"  TO SI-OP
+    MOVE "STL-TEST-UNKNOWN-01" TO SI-E2E-ID
+    CALL "BPXSPI" USING BK-PX-SPI-PARMS
+    DISPLAY "test=query_unknown_1 rc=" SI-RC " result=" FUNCTION TRIM(SI-RESULT) " msg=" FUNCTION TRIM(SI-MSG)
+
+    *> Test 3: Second query of the in-flight UNKNOWN settlement
+    *> In previous code, query #2 falsely mutated UNKNOWN to SETTLED (auto-settlement bug)
+    *> With the fix, it remains UNKNOWN with RC 24
+    MOVE SPACES TO BK-PX-SPI-PARMS
+    MOVE "FIXTURE"    TO SI-ADAPTER
+    MOVE "STL-QUERY"  TO SI-OP
+    MOVE "STL-TEST-UNKNOWN-01" TO SI-E2E-ID
+    CALL "BPXSPI" USING BK-PX-SPI-PARMS
+    DISPLAY "test=query_unknown_2 rc=" SI-RC " result=" FUNCTION TRIM(SI-RESULT) " msg=" FUNCTION TRIM(SI-MSG)
+
+    *> Test 4: Third query to assert idempotency of repeated UNKNOWN checks
+    MOVE SPACES TO BK-PX-SPI-PARMS
+    MOVE "FIXTURE"    TO SI-ADAPTER
+    MOVE "STL-QUERY"  TO SI-OP
+    MOVE "STL-TEST-UNKNOWN-01" TO SI-E2E-ID
+    CALL "BPXSPI" USING BK-PX-SPI-PARMS
+    DISPLAY "test=query_unknown_3 rc=" SI-RC " result=" FUNCTION TRIM(SI-RESULT) " msg=" FUNCTION TRIM(SI-MSG)
+
+    *> Test 5: Submit and query an explicitly SETTLED transaction
+    MOVE SPACES TO BK-PX-SPI-PARMS
+    MOVE "FIXTURE"    TO SI-ADAPTER
+    MOVE "STL-SUBMIT" TO SI-OP
+    MOVE "STL-TEST-SETTLED-02" TO SI-E2E-ID
+    MOVE "REF-EXT-02" TO SI-EXT-REF
+    MOVE 50000.00     TO SI-AMOUNT
+    MOVE "BRL"        TO SI-CURRENCY
+    MOVE "SETTLED"    TO SI-SIM
+    CALL "BPXSPI" USING BK-PX-SPI-PARMS
+
+    MOVE SPACES TO BK-PX-SPI-PARMS
+    MOVE "FIXTURE"    TO SI-ADAPTER
+    MOVE "STL-QUERY"  TO SI-OP
+    MOVE "STL-TEST-SETTLED-02" TO SI-E2E-ID
+    CALL "BPXSPI" USING BK-PX-SPI-PARMS
+    DISPLAY "test=query_settled rc=" SI-RC " result=" FUNCTION TRIM(SI-RESULT) " msg=" FUNCTION TRIM(SI-MSG)
+
+    GOBACK.
