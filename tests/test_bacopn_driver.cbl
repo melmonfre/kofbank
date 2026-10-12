@@ -1,0 +1,85 @@
+IDENTIFICATION DIVISION.
+PROGRAM-ID. TESTBACOPN.
+
+ENVIRONMENT DIVISION.
+INPUT-OUTPUT SECTION.
+FILE-CONTROL.
+    SELECT ACCT-FILE ASSIGN TO WS-ACCT-PATH
+        ORGANIZATION IS INDEXED
+        ACCESS MODE IS DYNAMIC
+        RECORD KEY IS AC-ACCT-ID OF ACCT-REC
+        FILE STATUS IS WS-ACCT-ST.
+
+DATA DIVISION.
+FILE SECTION.
+COPY "BACCT".
+
+WORKING-STORAGE SECTION.
+01 WS-HOME PIC X(80).
+01 WS-ACCT-PATH PIC X(200).
+01 WS-ACCT-ST PIC X(02).
+01 WS-COUNT PIC 9(04).
+01 WS-STATUS PIC X(02).
+
+01 REQ-OPEN.
+   05 REQ-CUST-ID PIC X(12).
+   05 REQ-PRODUCT PIC X(04).
+   05 REQ-CURRENCY PIC X(03).
+   05 REQ-INITIAL PIC S9(15)V99 COMP-3.
+   05 REQ-OPERATOR PIC X(12).
+   05 REQ-CORR PIC X(24).
+   05 REQ-REQUEST PIC X(24).
+
+01 RES-OPEN.
+   05 RES-ACCT-ID PIC X(12).
+   05 RES-RC PIC X(02).
+   05 RES-MSG PIC X(80).
+
+PROCEDURE DIVISION.
+    ACCEPT WS-HOME FROM ENVIRONMENT "BANK_HOME"
+    MOVE SPACES TO WS-ACCT-PATH
+    STRING FUNCTION TRIM(WS-HOME) "/var/data/acct.idx"
+        DELIMITED SIZE INTO WS-ACCT-PATH
+
+    *> Test 1: Open zero-deposit account
+    MOVE SPACES TO REQ-OPEN RES-OPEN
+    MOVE "C00000000001" TO REQ-CUST-ID
+    MOVE "DMND"         TO REQ-PRODUCT
+    MOVE "BRL"          TO REQ-CURRENCY
+    MOVE 0              TO REQ-INITIAL
+    MOVE "OP01"         TO REQ-OPERATOR
+    MOVE "CORR-01"      TO REQ-CORR
+    MOVE "REQ-OPEN-01"  TO REQ-REQUEST
+    CALL "BACOPN" USING REQ-OPEN RES-OPEN
+    DISPLAY "test=open_zero_deposit rc=" RES-RC " id=" RES-ACCT-ID
+
+    *> Test 2: Attempt open with initial deposit when GL chart is NOT initialized
+    *> This will cause POST-INITIAL (BGLPST) to fail.
+    *> The fixed code MUST execute ROLLBACK-ACCOUNT and delete the account record!
+    MOVE SPACES TO REQ-OPEN RES-OPEN
+    MOVE "C00000000001" TO REQ-CUST-ID
+    MOVE "DMND"         TO REQ-PRODUCT
+    MOVE "BRL"          TO REQ-CURRENCY
+    MOVE 50000.00       TO REQ-INITIAL
+    MOVE "OP01"         TO REQ-OPERATOR
+    MOVE "CORR-02"      TO REQ-CORR
+    MOVE "REQ-OPEN-02"  TO REQ-REQUEST
+    CALL "BACOPN" USING REQ-OPEN RES-OPEN
+    DISPLAY "test=open_failed_deposit rc=" RES-RC " id=" RES-ACCT-ID
+
+    *> Test 3: Verify the account from Test 2 was rolled back and is NOT in acct.idx (no ghost account!)
+    OPEN INPUT ACCT-FILE
+    IF WS-ACCT-ST = "00"
+        MOVE RES-ACCT-ID TO AC-ACCT-ID
+        READ ACCT-FILE
+        IF WS-ACCT-ST = "23"
+            DISPLAY "test=ghost_account_deleted status=ROLLED_BACK"
+        ELSE
+            DISPLAY "test=ghost_account_deleted status=STILL_EXISTS_ERROR"
+        END-IF
+        CLOSE ACCT-FILE
+    ELSE
+        DISPLAY "test=ghost_account_deleted status=NO_FILE_ROLLED_BACK"
+    END-IF
+
+    GOBACK.
